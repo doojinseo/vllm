@@ -162,6 +162,48 @@ def write_csv(rows: list[dict], path: Path) -> None:
         writer.writerows(rows)
 
 
+def plot_results(rows: list[dict], path: Path) -> None:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    variant_data: dict[str, dict[str, list]] = {}
+    for row in rows:
+        v = row["variant"]
+        if v not in variant_data:
+            variant_data[v] = {"batch_sizes": [], "tps": []}
+        variant_data[v]["batch_sizes"].append(int(row["batch_size"]))
+        tps = row["accepted_tokens_per_sec"]
+        variant_data[v]["tps"].append(
+            float(tps) if not (isinstance(tps, float) and math.isnan(tps)) else None
+        )
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    markers = {"base": "o", "awq": "s", "gptq": "^"}
+
+    for variant, data in variant_data.items():
+        xs = data["batch_sizes"]
+        ys = data["tps"]
+        ax.plot(xs, ys, marker=markers.get(variant, "x"),
+                label=variant, linewidth=2, markersize=7)
+
+    ax.set_xscale("log", base=2)
+    ax.set_xticks(BATCH_SIZES)
+    ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+    ax.set_xlabel("Batch size (max-num-seqs)", fontsize=12)
+    ax.set_ylabel("Accepted tokens / sec", fontsize=12)
+    ax.set_title(
+        "Speculative Decoding Throughput vs Batch Size\n"
+        "(Qwen3-1.7B draft → Qwen3-8B)",
+        fontsize=13,
+    )
+    ax.legend(loc="upper left", fontsize=11)
+    ax.grid(True, which="both", linestyle="--", alpha=0.4)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     args = parse_args()
 
@@ -193,3 +235,7 @@ if __name__ == "__main__":
     csv_path = out_dir / "results.csv"
     write_csv(rows, csv_path)
     print(f"\nCSV written to {csv_path}")
+
+    png_path = out_dir / "results.png"
+    plot_results(rows, png_path)
+    print(f"Plot written to {png_path}")

@@ -7,7 +7,7 @@ import math
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "benchmarks"))
-from benchmark_spec_decode_quant_sweep import build_cmd, OUTPUT_LEN, write_csv, CSV_COLUMNS  # noqa: E402
+from benchmark_spec_decode_quant_sweep import build_cmd, OUTPUT_LEN, write_csv, CSV_COLUMNS, plot_results  # noqa: E402
 
 
 def test_build_cmd_base_no_quant_flag():
@@ -70,3 +70,21 @@ def test_write_csv_creates_file_with_correct_columns():
         assert data[0]["variant"] == "base"
         assert float(data[0]["accepted_tokens_per_sec"]) == pytest.approx(123.4)
         assert math.isnan(float(data[1]["accepted_tokens_per_sec"]))
+
+
+def test_plot_results_creates_png():
+    rows = []
+    for variant in ["base", "awq", "gptq"]:
+        for bs in [1, 2, 4, 8]:
+            rows.append({
+                "variant": variant,
+                "batch_size": bs,
+                "num_prompts": max(256, bs * 4),
+                "accepted_tokens_per_sec": bs * 100.0,
+                "elapsed_time": 1.0,
+            })
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "results.png"
+        plot_results(rows, out)
+        assert out.exists()
+        assert out.stat().st_size > 0
