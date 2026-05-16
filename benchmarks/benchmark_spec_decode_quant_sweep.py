@@ -29,6 +29,7 @@ BATCH_SIZES = [1, 2, 4, 8, 16, 32, 64, 128]
 NUM_SPECULATIVE_TOKENS = 5
 INPUT_LEN = 128
 OUTPUT_LEN = 256
+MAX_STDERR_CHARS = 2000
 
 CSV_COLUMNS = [
     "variant", "batch_size", "num_prompts",
@@ -124,7 +125,7 @@ def run_one(
 
     if result.returncode != 0:
         print(f"  FAILED (exit {result.returncode})")
-        print(result.stderr[-2000:])
+        print(result.stderr[-MAX_STDERR_CHARS:])
         return row
 
     json_path = Path(output_json)
@@ -132,8 +133,17 @@ def run_one(
         print("  FAILED: output JSON not written")
         return row
 
-    with open(json_path) as f:
-        data = json.load(f)
+    try:
+        with open(json_path) as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"  FAILED: invalid JSON in {output_json}: {e}")
+        return row
+
+    required_keys = ["elapsed_time", "num_requests"]
+    if not all(k in data for k in required_keys):
+        print(f"  FAILED: missing keys in JSON. Expected {required_keys}")
+        return row
 
     elapsed = data["elapsed_time"]
     num_requests = data["num_requests"]
