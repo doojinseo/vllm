@@ -155,8 +155,41 @@ def run_one(
     return row
 
 
+def write_csv(rows: list[dict], path: Path) -> None:
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 if __name__ == "__main__":
     args = parse_args()
-    print(f"Output dir : {args.output_dir}")
-    print(f"Variants   : {args.variants}")
-    print(f"Batch sizes: {args.batch_sizes}")
+
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    selected_variants = {k: VARIANTS[k] for k in args.variants}
+
+    total = len(selected_variants) * len(args.batch_sizes)
+    done = 0
+    rows: list[dict] = []
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        for variant_name, variant_cfg in selected_variants.items():
+            for batch_size in args.batch_sizes:
+                done += 1
+                print(f"\n=== Run {done}/{total} ===")
+                row = run_one(
+                    benchmark_script=args.benchmark_script,
+                    target_model=TARGET_MODEL,
+                    variant_name=variant_name,
+                    variant_cfg=variant_cfg,
+                    batch_size=batch_size,
+                    tp=args.tensor_parallel_size,
+                    tmp_dir=tmp_dir,
+                )
+                rows.append(row)
+
+    csv_path = out_dir / "results.csv"
+    write_csv(rows, csv_path)
+    print(f"\nCSV written to {csv_path}")
