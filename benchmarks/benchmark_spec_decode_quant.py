@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass
 
 import torch
+from tabulate import tabulate
 
 
 def load_sharegpt(
@@ -68,3 +69,27 @@ def load_sharegpt(
         results.append((prompt_ids, output_len))
 
     return results
+
+
+@dataclass
+class VariantResult:
+    accepted_tok_per_sec: float
+    total_output_tokens: int
+    wall_time_sec: float
+
+
+def format_results_table(
+    results: dict[int, dict[str | None, "VariantResult | None"]],
+    batch_sizes: list[int],
+) -> str:
+    """Return a tabulated string: rows = batch sizes, cols = quant variants."""
+    headers = ["Batch size", "base (tok/s)", "fp8 (tok/s)", "int8 (tok/s)"]
+    quant_keys: list[str | None] = [None, "fp8", "int8"]
+    rows = []
+    for bs in batch_sizes:
+        row: list = [bs]
+        for q in quant_keys:
+            r = results.get(bs, {}).get(q)
+            row.append(f"{r.accepted_tok_per_sec:.1f}" if r is not None else "N/A")
+        rows.append(row)
+    return tabulate(rows, headers=headers, tablefmt="simple", disable_numparse=True)

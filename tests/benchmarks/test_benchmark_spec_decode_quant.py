@@ -143,3 +143,54 @@ def test_load_sharegpt_missing_file():
             tokenizer=_MockTokenizer(),
             seed=42,
         )
+
+
+@pytest.mark.benchmark
+def test_format_results_table_all_present():
+    """Table contains header labels and all numeric values."""
+    from benchmark_spec_decode_quant import VariantResult, format_results_table
+
+    results = {
+        1: {
+            None: VariantResult(accepted_tok_per_sec=100.0, total_output_tokens=500, wall_time_sec=5.0),
+            "fp8": VariantResult(accepted_tok_per_sec=120.0, total_output_tokens=500, wall_time_sec=4.2),
+            "int8": VariantResult(accepted_tok_per_sec=110.0, total_output_tokens=500, wall_time_sec=4.5),
+        }
+    }
+    table = format_results_table(results, batch_sizes=[1])
+    assert "base" in table
+    assert "fp8" in table
+    assert "int8" in table
+    assert "100.0" in table
+    assert "120.0" in table
+    assert "110.0" in table
+
+
+@pytest.mark.benchmark
+def test_format_results_table_na_on_failure():
+    """N/A appears for cells where the variant result is None."""
+    from benchmark_spec_decode_quant import VariantResult, format_results_table
+
+    results = {
+        4: {
+            None: VariantResult(accepted_tok_per_sec=50.0, total_output_tokens=200, wall_time_sec=4.0),
+            "fp8": None,
+            "int8": None,
+        }
+    }
+    table = format_results_table(results, batch_sizes=[4])
+    assert "N/A" in table
+    assert "50.0" in table
+
+
+@pytest.mark.benchmark
+def test_format_results_table_row_order():
+    """Rows appear in the order given by batch_sizes."""
+    from benchmark_spec_decode_quant import VariantResult, format_results_table
+
+    r = VariantResult(accepted_tok_per_sec=1.0, total_output_tokens=1, wall_time_sec=1.0)
+    results = {bs: {None: r, "fp8": r, "int8": r} for bs in [1, 128]}
+    table = format_results_table(results, batch_sizes=[1, 128])
+    pos_1 = table.index("1")
+    pos_128 = table.index("128")
+    assert pos_1 < pos_128
