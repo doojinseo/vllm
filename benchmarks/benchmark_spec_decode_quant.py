@@ -93,3 +93,66 @@ def format_results_table(
             row.append(f"{r.accepted_tok_per_sec:.1f}" if r is not None else "N/A")
         rows.append(row)
     return tabulate(rows, headers=headers, tablefmt="simple", disable_numparse=True)
+
+
+def run_variant(
+    target_model: str,
+    draft_model: str,
+    quantization: str | None,
+    max_num_seqs: int,
+    prompts: list[tuple[list[int], int]],
+    num_spec_tokens: int,
+    max_model_len: int,
+) -> VariantResult:
+    """Run one (batch_size, quantization) cell and return metrics.
+
+    Constructs a fresh LLM, runs all prompts, reads accepted token counts from
+    Prometheus via llm.get_metrics(), then tears down the engine.
+    """
+    from vllm import LLM, SamplingParams
+
+    llm: LLM | None = None
+    try:
+        llm = LLM(
+            model=target_model,
+            max_num_seqs=max_num_seqs,
+            max_model_len=max_model_len,
+            disable_log_stats=False,
+            speculative_config={
+                "method": "draft_model",
+                "model": draft_model,
+                "num_speculative_tokens": num_spec_tokens,
+                "quantization": quantization,
+            },
+        )
+
+        vllm_prompts = [{"prompt_token_ids": ids} for ids, _ in prompts]
+        sampling_params_list = [
+            SamplingParams(max_tokens=out_len, ignore_eos=True, temperature=0.0)
+            for _, out_len in prompts
+        ]
+
+        start = time.perf_counter()
+        outputs = llm.generate(vllm_prompts, sampling_params=sampling_params_list)
+        elapsed = time.perf_counter() - start
+
+        # Extract accepted token count from Prometheus counters.
+        accepted_count = 0
+        for metric in llm.get_metrics():
+            if metric.name == "vllm:spec_decode_num_accepted_tokens":
+                accepted_count += metric.value
+
+        total_output = sum(
+            sum(len(o.token_ids) for o in out.outputs) for out in outputs
+        )
+
+        return VariantResult(
+            accepted_tok_per_sec=accepted_count / elapsed if elapsed > 0 else 0.0,
+            total_output_tokens=total_output,
+            wall_time_sec=elapsed,
+        )
+    finally:
+        if llm is not None:
+            del llm
+        gc.collect()
+        torch.cuda.empty_cache()
