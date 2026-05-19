@@ -15,11 +15,13 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import gc
 import json
 import random
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import torch
 from tabulate import tabulate
@@ -162,9 +164,7 @@ def run_variant(
         torch.cuda.empty_cache()
 
 
-def parse_args():
-    import argparse
-
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Benchmark spec decode draft model quantization variants."
     )
@@ -220,7 +220,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    if not __import__("os").path.exists(args.dataset):
+    if not Path(args.dataset).exists():
         raise FileNotFoundError(f"Dataset not found: {args.dataset}")
 
     from transformers import AutoTokenizer
