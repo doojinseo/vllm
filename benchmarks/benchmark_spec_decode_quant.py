@@ -11,6 +11,14 @@ Usage:
         --num-prompts 500 \\
         --num-spec-tokens 5 \\
         --batch-sizes 1 4 8 16 32 64 128
+
+Notes:
+    The --draft-model argument is used for all three quantization variants.
+    vLLM applies fp8/int8 quantization on-the-fly to the bf16 weights when
+    quantization="fp8" or "int8" is passed in speculative_config.  If the
+    model checkpoint is already quantized (e.g. a Qwen3-1.7B-FP8 model),
+    pass that path via --draft-model and set --batch-sizes to a single value
+    or adjust the quant_variants list in main() accordingly.
 """
 
 from __future__ import annotations
@@ -116,8 +124,8 @@ def run_variant(
 
     llm: LLM | None = None
     try:
-        # disable_log_stats=False is required: get_metrics() raises AssertionError
-        # if log stats are disabled (vllm/entrypoints/llm.py line 1122).
+        # disable_log_stats=False is required: get_metrics() asserts self.log_stats
+        # (vllm/v1/engine/llm_engine.py). LLM() defaults disable_log_stats=True.
         llm = LLM(
             model=target_model,
             max_num_seqs=max_num_seqs,
@@ -248,7 +256,7 @@ def main():
         results[batch_size] = {}
         for quantization in quant_variants:
             run_num += 1
-            label = f"base (bf16)" if quantization is None else quantization
+            label = "base (bf16)" if quantization is None else quantization
             print(
                 f"\n[{run_num}/{total_runs}] batch_size={batch_size}, quant={label}"
             )

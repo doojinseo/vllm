@@ -191,6 +191,8 @@ def test_format_results_table_row_order():
     r = VariantResult(accepted_tok_per_sec=1.0, total_output_tokens=1, wall_time_sec=1.0)
     results = {bs: {None: r, "fp8": r, "int8": r} for bs in [1, 128]}
     table = format_results_table(results, batch_sizes=[1, 128])
-    pos_1 = table.index("1")
-    pos_128 = table.index("128")
-    assert pos_1 < pos_128
+    lines = [line for line in table.splitlines() if line.strip()]
+    batch_size_col = [line.split()[0] for line in lines if line.split()]
+    assert "1" in batch_size_col
+    assert "128" in batch_size_col
+    assert batch_size_col.index("1") < batch_size_col.index("128")
