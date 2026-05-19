@@ -110,9 +110,12 @@ def run_variant(
     Prometheus via llm.get_metrics(), then tears down the engine.
     """
     from vllm import LLM, SamplingParams
+    from vllm.v1.metrics.reader import Counter as VllmCounter
 
     llm: LLM | None = None
     try:
+        # disable_log_stats=False is required: get_metrics() raises AssertionError
+        # if log stats are disabled (vllm/entrypoints/llm.py line 1122).
         llm = LLM(
             model=target_model,
             max_num_seqs=max_num_seqs,
@@ -139,7 +142,8 @@ def run_variant(
         # Extract accepted token count from Prometheus counters.
         accepted_count = 0
         for metric in llm.get_metrics():
-            if metric.name == "vllm:spec_decode_num_accepted_tokens":
+            if (metric.name == "vllm:spec_decode_num_accepted_tokens"
+                    and isinstance(metric, VllmCounter)):
                 accepted_count += metric.value
 
         total_output = sum(
