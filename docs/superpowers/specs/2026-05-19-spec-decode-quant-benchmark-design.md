@@ -5,7 +5,7 @@
 
 ## Goal
 
-Compare accepted tokens/second across three draft model quantization variants in vLLM's speculative decoding pipeline, using a fixed target model and a shared realistic workload.
+Compare accepted tokens/second across three draft model quantization variants in vLLM's speculative decoding pipeline, sweeping over batch sizes to reveal how quantization interacts with the compute/memory-bandwidth tradeoff.
 
 | Role | Model |
 |------|-------|
@@ -17,6 +17,7 @@ Compare accepted tokens/second across three draft model quantization variants in
 - **Workload:** ShareGPT dataset (offline batch, all prompts submitted at once)
 - **Speculative tokens:** 5 per draft step
 - **GPU:** Single GPU
+- **Batch sizes swept:** `[1, 4, 8, 16, 32, 64, 128]` (controlled via `max_num_seqs`)
 - **Primary metric:** accepted tokens/second
 
 ---
@@ -26,8 +27,8 @@ Compare accepted tokens/second across three draft model quantization variants in
 Three phases run sequentially in a single script:
 
 1. **Setup** — parse CLI args, load and sample the ShareGPT dataset once (shared across all runs for a fair comparison), initialize the tokenizer.
-2. **Benchmark loop** — iterate over `[base, fp8, int8]`. For each variant, construct `LLM`, run `generate()` on all prompts, capture metrics, destroy the engine and free GPU memory before the next variant.
-3. **Output** — print a formatted comparison table.
+2. **Benchmark loop** — outer loop over batch sizes `[1, 4, 8, 16, 32, 64, 128]`; inner loop over quantization variants `[base, fp8, int8]`. For each `(batch_size, quantization)` combination, construct `LLM` with `max_num_seqs=batch_size`, run `generate()` on all prompts, capture metrics, destroy the engine and free GPU memory before the next combination.
+3. **Output** — print a 2D comparison table (rows = batch sizes, columns = quantization variants).
 
 ---
 
@@ -35,21 +36,25 @@ Three phases run sequentially in a single script:
 
 ### `load_sharegpt(path, num_samples, max_prompt_tokens, max_output_tokens, tokenizer)`
 
-Reads the ShareGPT JSON file, filters conversations that have at least one assistant turn, tokenizes the human prompt, truncates to `max_prompt_tokens`, caps requested output length at `max_output_tokens`. Returns `list[tuple[list[int], int]]` — `(prompt_token_ids, output_len)` pairs. Logic mirrors `benchmark_throughput.py` so results are directly comparable.
+Reads the ShareGPT JSON file, filters conversations that have at least one assistant turn, tokenizes the human prompt, truncates to `max_prompt_tokens`, caps requested output length at `max_output_tokens`. Returns `list[tuple[list[int], int]]` — `(prompt_token_ids, output_len)` pairs. Logic mirrors `benchmark_throughput.py` so results are directly comparable. Called once; the same list is reused across all 21 benchmark runs.
 
-### `run_variant(target_model, draft_model, quantization, prompts, num_spec_tokens) -> VariantResult`
+### `run_variant(target_model, draft_model, quantization, max_num_seqs, prompts, num_spec_tokens) -> VariantResult`
 
 Constructs `LLM` with:
 
 ```python
-speculative_config=SpeculativeConfig(
-    model=draft_model,
-    num_speculative_tokens=num_spec_tokens,
-    quantization=quantization,   # None for base, "fp8", or "int8"
+LLM(
+    model=target_model,
+    max_num_seqs=max_num_seqs,        # controls effective batch size
+    speculative_config=SpeculativeConfig(
+        model=draft_model,
+        num_speculative_tokens=num_spec_tokens,
+        quantization=quantization,    # None for base, "fp8", or "int8"
+    ),
 )
 ```
 
-Wraps `llm.generate()` with wall-clock timing. Captures `accepted_tokens/s` by attaching a string log handler to the `vllm.v1.spec_decode.metrics` logger and parsing its output line. Returns `VariantResult(accepted_tok_per_sec, total_output_tokens, wall_time_sec)`.
+Wraps `llm.generate()` with wall-clock timing. Captures accepted tok/s by attaching a `logging.StreamHandler` backed by a `StringIO` buffer to the `vllm.v1.spec_decode.metrics` logger, then parsing `Accepted throughput: X.XX tokens/s` from the `SpecDecoding metrics:` log line emitted after generation completes. Returns `VariantResult(accepted_tok_per_sec, total_output_tokens, wall_time_sec)`.
 
 ### `main()`
 
@@ -62,19 +67,24 @@ Orchestrates setup → benchmark loop → table print. CLI args:
 | `--dataset` | *(required)* | Path to ShareGPT JSON file |
 | `--num-prompts` | `500` | Number of prompts to sample |
 | `--num-spec-tokens` | `5` | Speculative tokens per step |
+| `--batch-sizes` | `1 4 8 16 32 64 128` | Space-separated list of `max_num_seqs` values to sweep |
 | `--max-model-len` | `4096` | Max sequence length |
 | `--seed` | `42` | Sampling seed |
 
 ### Result table
 
-Printed via `tabulate` (a test/benchmark environment dep; `pip install tabulate` if missing):
+Printed via `tabulate` (a test/benchmark environment dep; `pip install tabulate` if missing). Rows are batch sizes; columns are the three variants plus a wall-time column per variant:
 
 ```
-Draft variant    Accepted tok/s    Output tok/s    Wall time (s)
----------------  ----------------  --------------  ---------------
-base (bf16)      ...               ...             ...
-fp8              ...               ...             ...
-int8             ...               ...             ...
+Batch size    base (tok/s)    fp8 (tok/s)    int8 (tok/s)
+----------    ------------    -----------    ------------
+1             ...             ...            ...
+4             ...             ...            ...
+8             ...             ...            ...
+16            ...             ...            ...
+32            ...             ...            ...
+64            ...             ...            ...
+128           ...             ...            ...
 ```
 
 ---
@@ -85,26 +95,37 @@ int8             ...               ...             ...
 ShareGPT JSON
       │
       ▼
-load_sharegpt() ──► [(prompt_token_ids, output_len), ...] ← shared across all 3 runs
+load_sharegpt() ──► [(prompt_token_ids, output_len), ...] ← shared across all 21 runs
                                         │
-        ┌───────────────────────────────┼───────────────────────────────┐
-        ▼                               ▼                               ▼
-  variant: base                   variant: fp8                   variant: int8
-  quantization=None               quantization="fp8"             quantization="int8"
-        │                               │                               │
-        ▼                               ▼                               ▼
-  LLM(Qwen3-8B +             LLM(Qwen3-8B +                 LLM(Qwen3-8B +
-   draft Qwen3-1.7B)          draft Qwen3-1.7B fp8)          draft Qwen3-1.7B int8)
-        │                               │                               │
-        └───────────────────────────────┴───────────────────────────────┘
-                                        │
-                                        ▼
-                             tabulate & print results
+              for batch_size in [1, 4, 8, 16, 32, 64, 128]:
+                for quantization in [None, "fp8", "int8"]:
+                        │
+                        ▼
+              LLM(Qwen3-8B,
+                  max_num_seqs=batch_size,
+                  speculative_config={
+                    model=Qwen3-1.7B,
+                    num_spec_tokens=5,
+                    quantization=quantization,
+                  })
+                        │
+                        ▼
+              llm.generate(prompts)
+                        │
+                        ▼
+              parse "Accepted throughput: X.XX tokens/s"
+              from vllm.v1.spec_decode.metrics logger
+                        │
+                        ▼
+              del llm; gc.collect(); cuda.empty_cache()
+                        │
+                        ▼
+              record VariantResult in results[batch_size][quantization]
+
+      │
+      ▼
+tabulate & print 2D results table
 ```
-
-Each LLM instance is destroyed (with `del llm; gc.collect(); torch.cuda.empty_cache()`) in a `finally` block before the next variant is constructed.
-
-Accepted tok/s is extracted by intercepting the `vllm.v1.spec_decode.metrics` logger with a `logging.StreamHandler` pointed at a `StringIO` buffer, then parsing `Accepted throughput: X.XX tokens/s` from the `SpecDecoding metrics:` log line emitted at the end of generation.
 
 ---
 
@@ -112,8 +133,8 @@ Accepted tok/s is extracted by intercepting the `vllm.v1.spec_decode.metrics` lo
 
 | Scenario | Behavior |
 |----------|----------|
-| Variant raises exception (e.g., fp8 unsupported on GPU) | Caught, warning printed, `N/A` recorded in table, continue to next variant |
-| CUDA OOM during `LLM` construction | Same catch-and-continue; CUDA error message included in warning |
+| Variant raises exception (e.g., fp8 unsupported on GPU) | Caught, warning printed, `N/A` recorded in that cell, continue to next combination |
+| CUDA OOM (likely at large batch sizes) | Same catch-and-continue; CUDA error message included in warning |
 | Missing ShareGPT dataset file | Hard fail with clear error message before any GPU work begins |
 | Generation fails mid-run | `finally` block always runs `del llm; gc.collect(); torch.cuda.empty_cache()` |
 
@@ -133,5 +154,6 @@ No existing files are modified.
 python benchmarks/benchmark_spec_decode_quant.py \
     --dataset /path/to/ShareGPT_V3_unfiltered_cleaned_split.json \
     --num-prompts 500 \
-    --num-spec-tokens 5
+    --num-spec-tokens 5 \
+    --batch-sizes 1 4 8 16 32 64 128
 ```
