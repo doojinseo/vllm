@@ -160,3 +160,122 @@ def run_variant(
             del llm
         gc.collect()
         torch.cuda.empty_cache()
+
+
+def parse_args():
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Benchmark spec decode draft model quantization variants."
+    )
+    parser.add_argument(
+        "--target-model",
+        default="Qwen/Qwen3-8B",
+        help="HuggingFace model ID for the target model.",
+    )
+    parser.add_argument(
+        "--draft-model",
+        default="Qwen/Qwen3-1.7B",
+        help="HuggingFace model ID for the draft model.",
+    )
+    parser.add_argument(
+        "--dataset",
+        required=True,
+        help="Path to ShareGPT JSON file.",
+    )
+    parser.add_argument(
+        "--num-prompts",
+        type=int,
+        default=500,
+        help="Number of prompts to sample from the dataset.",
+    )
+    parser.add_argument(
+        "--num-spec-tokens",
+        type=int,
+        default=5,
+        help="Number of speculative tokens per draft step.",
+    )
+    parser.add_argument(
+        "--batch-sizes",
+        type=int,
+        nargs="+",
+        default=[1, 4, 8, 16, 32, 64, 128],
+        help="Space-separated list of max_num_seqs values to sweep.",
+    )
+    parser.add_argument(
+        "--max-model-len",
+        type=int,
+        default=4096,
+        help="Maximum sequence length (prompt + output).",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for dataset sampling.",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    if not __import__("os").path.exists(args.dataset):
+        raise FileNotFoundError(f"Dataset not found: {args.dataset}")
+
+    from transformers import AutoTokenizer
+
+    print(f"Loading tokenizer for {args.target_model} ...")
+    tokenizer = AutoTokenizer.from_pretrained(args.target_model)
+
+    print(f"Sampling {args.num_prompts} prompts from {args.dataset} ...")
+    prompts = load_sharegpt(
+        dataset_path=args.dataset,
+        num_samples=args.num_prompts,
+        max_model_len=args.max_model_len,
+        tokenizer=tokenizer,
+        seed=args.seed,
+    )
+    print(f"  → {len(prompts)} prompts after filtering.")
+
+    quant_variants: list[str | None] = [None, "fp8", "int8"]
+    results: dict[int, dict[str | None, VariantResult | None]] = {}
+
+    total_runs = len(args.batch_sizes) * len(quant_variants)
+    run_num = 0
+
+    for batch_size in args.batch_sizes:
+        results[batch_size] = {}
+        for quantization in quant_variants:
+            run_num += 1
+            label = f"base (bf16)" if quantization is None else quantization
+            print(
+                f"\n[{run_num}/{total_runs}] batch_size={batch_size}, quant={label}"
+            )
+            try:
+                result = run_variant(
+                    target_model=args.target_model,
+                    draft_model=args.draft_model,
+                    quantization=quantization,
+                    max_num_seqs=batch_size,
+                    prompts=prompts,
+                    num_spec_tokens=args.num_spec_tokens,
+                    max_model_len=args.max_model_len,
+                )
+                results[batch_size][quantization] = result
+                print(
+                    f"  accepted tok/s: {result.accepted_tok_per_sec:.1f}  "
+                    f"wall time: {result.wall_time_sec:.1f}s"
+                )
+            except Exception as exc:
+                print(f"  WARNING: run failed ({exc.__class__.__name__}: {exc})")
+                results[batch_size][quantization] = None
+
+    print("\n" + "=" * 60)
+    print("Results — Accepted tokens/second")
+    print("=" * 60)
+    print(format_results_table(results, args.batch_sizes))
+
+
+if __name__ == "__main__":
+    main()
