@@ -151,14 +151,6 @@ def find_crossover(
     return crossover
 
 
-def _unique_path(path: str) -> str:
-    p = Path(path)
-    if not p.exists():
-        return path
-    stamp = time.strftime("%Y%m%d_%H%M%S")
-    return str(p.with_stem(f"{p.stem}_{stamp}"))
-
-
 def save_results(
     output_path: str,
     config: dict,
@@ -168,8 +160,6 @@ def save_results(
     batch_sizes: list,
     crossover: dict,
 ) -> None:
-    import json as _json
-
     def _serialize(r):
         if r is None:
             return None
@@ -195,7 +185,7 @@ def save_results(
     }
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
-        _json.dump(data, f, indent=2)
+        json.dump(data, f, indent=2)
 
 
 def plot_results(
