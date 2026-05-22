@@ -112,15 +112,17 @@ def format_wave_table(
     from tabulate import tabulate
     headers = ["Wave", "Type", "Batch"] + [f"{lbl} (tok/s)" for lbl in variant_labels]
     first = next(iter(all_wave_results.values()))
+    # Build per-variant lookup by WaveResult.index so formatting is order-independent.
+    by_index: dict[str, dict[int, WaveResult]] = {
+        lbl: {r.index: r for r in all_wave_results.get(lbl, [])}
+        for lbl in variant_labels
+    }
     rows = []
     for wave in first:
         row: list = [wave.index, wave.type, wave.batch]
         for lbl in variant_labels:
-            results = all_wave_results.get(lbl, [])
-            row.append(
-                f"{results[wave.index].accepted_tok_per_sec:.1f}"
-                if wave.index < len(results) else "N/A"
-            )
+            r = by_index[lbl].get(wave.index)
+            row.append(f"{r.accepted_tok_per_sec:.1f}" if r is not None else "N/A")
         rows.append(row)
     return tabulate(rows, headers=headers, tablefmt="simple", disable_numparse=True)
 
@@ -150,15 +152,16 @@ def save_results(
 ) -> None:
     """Save results to JSON file."""
     first = next(iter(all_wave_results.values()))
+    by_index: dict[str, dict[int, WaveResult]] = {
+        lbl: {r.index: r for r in all_wave_results.get(lbl, [])}
+        for lbl in variant_labels
+    }
     waves = []
     for wave in first:
         entry: dict = {"index": wave.index, "type": wave.type, "batch": wave.batch}
         for lbl in variant_labels:
-            results = all_wave_results.get(lbl, [])
-            entry[lbl] = (
-                results[wave.index].accepted_tok_per_sec
-                if wave.index < len(results) else None
-            )
+            r = by_index[lbl].get(wave.index)
+            entry[lbl] = r.accepted_tok_per_sec if r is not None else None
         waves.append(entry)
 
     summary_dict = {
@@ -328,6 +331,15 @@ def run_variant_waves(
         delta = accepted_count - prev_accepted
         prev_accepted = accepted_count
 
+        if delta == 0:
+            import warnings
+            warnings.warn(
+                f"Wave {i} ({wave_type}): accepted token count is 0. "
+                "This may indicate Prometheus multiprocess mode is active "
+                "or speculative decoding is not functioning.",
+                stacklevel=2,
+            )
+
         tok_per_sec = delta / elapsed if elapsed > 0 else 0.0
         results.append(WaveResult(
             index=i, type=wave_type, batch=len(wave_prompts),
@@ -407,13 +419,16 @@ def main() -> None:
     print(format_summary_table(summaries, variant_labels))
 
     config = {
-        "small_batch":     args.small_batch,
-        "large_batch":     args.large_batch,
-        "num_wave_pairs":  args.num_wave_pairs,
-        "num_spec_tokens": args.num_spec_tokens,
-        "threshold":       args.threshold,
-        "ema_alpha":       args.ema_alpha,
-        "target_model":    args.target_model,
+        "small_batch":       args.small_batch,
+        "large_batch":       args.large_batch,
+        "num_wave_pairs":    args.num_wave_pairs,
+        "num_spec_tokens":   args.num_spec_tokens,
+        "threshold":         args.threshold,
+        "ema_alpha":         args.ema_alpha,
+        "target_model":      args.target_model,
+        "draft_model_base":  args.draft_model_base,
+        "draft_model_fp8":   args.draft_model_fp8,
+        "draft_model_int8":  args.draft_model_int8,
     }
     save_results(args.output, config, all_wave_results, summaries, variant_labels)
     print(f"\nResults saved to {args.output}")

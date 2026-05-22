@@ -156,8 +156,8 @@ def test_format_wave_table_row_order():
     r2 = WaveResult(1, "large", 32, 2.0, 1.0)
     all_results = {"fp8": [r, r2], "int8": [r, r2], "adaptive": [r, r2]}
     table = format_wave_table(all_results, LABELS)
-    lines = [l for l in table.splitlines() if l.strip() and not l.strip().startswith("-")]
-    idx_col = [l.split()[0] for l in lines if l.split()[0].isdigit()]
+    lines = [line for line in table.splitlines() if line.strip() and not line.strip().startswith("-")]
+    idx_col = [line.split()[0] for line in lines if line.split()[0].isdigit()]
     assert idx_col.index("0") < idx_col.index("1")
 
 
@@ -247,3 +247,31 @@ def test_parse_args_defaults(tmp_path):
     assert args.seed == 42
     assert args.output == "adaptive_draft_wave_results.json"
     assert args.plot is None
+
+
+@pytest.mark.benchmark
+def test_load_sharegpt_filters_overlong(tmp_path):
+    import json as _json
+    from benchmark_adaptive_draft import load_sharegpt
+
+    # 50 + 50 = 100 tokens total, max_model_len=80 → filtered
+    data = [{"conversations": [
+        {"value": " ".join(["word"] * 50)},
+        {"value": " ".join(["word"] * 50)},
+    ]}]
+    path = tmp_path / "sg.json"
+    path.write_text(_json.dumps(data))
+
+    result = load_sharegpt(str(path), num_samples=10, max_model_len=80,
+                           tokenizer=_MockTokenizer(), seed=42)
+    assert result == []
+
+
+@pytest.mark.benchmark
+def test_compute_summary_empty():
+    from benchmark_adaptive_draft import compute_summary
+
+    s = compute_summary([])
+    assert s.small_avg == 0.0
+    assert s.large_avg == 0.0
+    assert s.overall == 0.0
