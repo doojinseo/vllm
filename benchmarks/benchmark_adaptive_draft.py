@@ -222,3 +222,27 @@ def plot_results(
     plt.tight_layout()
     plt.savefig(plot_path, dpi=150)
     plt.close()
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Wave benchmark for adaptive draft model switching."
+    )
+    parser.add_argument("--target-model", default="Qwen/Qwen3-8B")
+    parser.add_argument("--draft-model-base", default="Qwen/Qwen3-1.7B")
+    parser.add_argument("--draft-model-fp8",  default="Qwen/Qwen3-1.7B-FP8")
+    parser.add_argument("--draft-model-int8", default="Qwen/Qwen3-1.7B-GPTQ-Int8")
+    parser.add_argument("--dataset", required=True)
+    parser.add_argument("--small-batch",    type=int,   default=4)
+    parser.add_argument("--large-batch",    type=int,   default=32)
+    parser.add_argument("--num-wave-pairs", type=int,   default=4)
+    parser.add_argument("--num-spec-tokens",type=int,   default=5)
+    parser.add_argument("--threshold",      type=int,   default=8)
+    parser.add_argument("--ema-alpha",      type=float, default=0.1)
+    parser.add_argument("--max-model-len",  type=int,   default=4096)
+    parser.add_argument("--seed",           type=int,   default=42)
+    parser.add_argument("--output", default="adaptive_draft_wave_results.json")
+    parser.add_argument("--plot",   default=None,
+                        help="Plot path (default: --output stem + .png)")
+    return parser.parse_args(argv)
