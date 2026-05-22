@@ -140,3 +140,16 @@ def test_plot_results_creates_file(tmp_path):
     )
     assert out.exists()
     assert out.stat().st_size > 0
+
+
+@pytest.mark.benchmark
+def test_parse_args_defaults(tmp_path):
+    from benchmark_spec_decode_sweep import parse_args
+    fake = tmp_path / "sg.json"
+    fake.write_text("[]")
+    args = parse_args(["--dataset", str(fake)])
+    assert args.spec_tokens == [3, 5, 7, 9]
+    assert args.batch_sizes == [1, 4, 8, 16, 32, 64, 128]
+    assert args.num_prompts == 500
+    assert args.max_model_len == 4096
+    assert args.seed == 42
