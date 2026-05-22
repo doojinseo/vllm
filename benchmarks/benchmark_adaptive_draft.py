@@ -376,6 +376,15 @@ def run_variant_waves(
     return results
 
 
+def _unique_path(path: str) -> str:
+    """Return path unchanged if it doesn't exist; otherwise insert a timestamp."""
+    p = Path(path)
+    if not p.exists():
+        return path
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    return str(p.with_stem(f"{p.stem}_{stamp}"))
+
+
 def main() -> None:
     args = parse_args()
 
@@ -455,11 +464,12 @@ def main() -> None:
         "draft_model_fp8":   args.draft_model_fp8,
         "draft_model_int8":  args.draft_model_int8,
     }
-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    save_results(args.output, config, all_wave_results, summaries, variant_labels)
-    print(f"\nResults saved to {args.output}")
+    output_path = _unique_path(args.output)
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    save_results(output_path, config, all_wave_results, summaries, variant_labels)
+    print(f"\nResults saved to {output_path}")
 
-    plot_path = args.plot or str(Path(args.output).with_suffix(".png"))
+    plot_path = args.plot or str(Path(output_path).with_suffix(".png"))
     plot_results(plot_path, all_wave_results, summaries, variant_labels)
     print(f"Plot saved to {plot_path}")
 
