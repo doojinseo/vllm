@@ -129,6 +129,28 @@ def _fmt(r: VariantResult | None) -> str:
     return f"{r.output_tok_per_sec:.1f}" if r is not None else "N/A"
 
 
+def find_crossover(
+    results: dict[int, dict[int, dict[str, "VariantResult | None"]]],
+    batch_sizes: list[int],
+    spec_tokens_list: list[int],
+) -> dict[int, int | None]:
+    """Return the first batch_size where fp8 output_tok_per_sec > int8, per k.
+
+    Returns None for a given k if fp8 never beats int8 across all batch sizes.
+    """
+    crossover: dict[int, int | None] = {}
+    for k in spec_tokens_list:
+        crossover[k] = None
+        for bs in batch_sizes:
+            fp8 = results[k][bs].get("fp8")
+            int8 = results[k][bs].get("int8")
+            if fp8 is not None and int8 is not None:
+                if fp8.output_tok_per_sec > int8.output_tok_per_sec:
+                    crossover[k] = bs
+                    break
+    return crossover
+
+
 def print_per_k_table(
     results: dict[int, dict[int, dict[str, VariantResult | None]]],
     batch_sizes: list[int],
@@ -216,10 +238,12 @@ def main() -> None:
     )
     print(f"  → {len(prompts)} prompts after filtering.")
 
+    # (label, draft_model_or_None) — None means no speculative decoding
     variants: list[tuple[str, str | None]] = [
-        ("base", None),
-        ("fp8",  args.draft_model_fp8),
-        ("int8", args.draft_model_int8),
+        ("base",       None),
+        ("draft_base", args.draft_model_base),
+        ("int8",       args.draft_model_int8),
+        ("fp8",        args.draft_model_fp8),
     ]
     variant_labels = [lbl for lbl, _ in variants]
 
@@ -274,6 +298,18 @@ def main() -> None:
     print("Per-k tables  (rows = batch size, cols = variant)")
     print("=" * 70)
     print_per_bs_table(results, args.batch_sizes, args.spec_tokens, variant_labels)
+
+    crossover = find_crossover(results, args.batch_sizes, args.spec_tokens)
+    print("\n\n" + "=" * 70)
+    print("Crossover: first batch_size where fp8 output_tok_per_sec > int8")
+    print("=" * 70)
+    for k, bs in crossover.items():
+        if bs is None:
+            print(f"  k={k}: fp8 never beats int8 in the tested range")
+        else:
+            low = bs // 2
+            print(f"  k={k}: fp8 beats int8 starting at batch_size={bs}")
+            print(f"         Recommended: --threshold {bs} --low-threshold {low}")
 
 
 if __name__ == "__main__":
