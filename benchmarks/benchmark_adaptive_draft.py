@@ -31,7 +31,7 @@ class WaveResult:
     index: int
     type: str               # "small" or "large"
     batch: int
-    accepted_tok_per_sec: float
+    output_tok_per_sec: float
     wall_time_sec: float
 
 
@@ -94,9 +94,9 @@ def pre_sample_waves(
 
 def compute_summary(wave_results: list[WaveResult]) -> VariantSummary:
     """Compute summary statistics across all waves."""
-    small = [r.accepted_tok_per_sec for r in wave_results if r.type == "small"]
-    large = [r.accepted_tok_per_sec for r in wave_results if r.type == "large"]
-    all_vals = [r.accepted_tok_per_sec for r in wave_results]
+    small = [r.output_tok_per_sec for r in wave_results if r.type == "small"]
+    large = [r.output_tok_per_sec for r in wave_results if r.type == "large"]
+    all_vals = [r.output_tok_per_sec for r in wave_results]
     return VariantSummary(
         small_avg=sum(small) / len(small) if small else 0.0,
         large_avg=sum(large) / len(large) if large else 0.0,
@@ -110,7 +110,7 @@ def format_wave_table(
 ) -> str:
     """Format per-wave results as a table."""
     from tabulate import tabulate
-    headers = ["Wave", "Type", "Batch"] + [f"{lbl} (tok/s)" for lbl in variant_labels]
+    headers = ["Wave", "Type", "Batch"] + [f"{lbl} (out tok/s)" for lbl in variant_labels]
     first = next(iter(all_wave_results.values()))
     # Build per-variant lookup by WaveResult.index so formatting is order-independent.
     by_index: dict[str, dict[int, WaveResult]] = {
@@ -122,7 +122,7 @@ def format_wave_table(
         row: list = [wave.index, wave.type, wave.batch]
         for lbl in variant_labels:
             r = by_index[lbl].get(wave.index)
-            row.append(f"{r.accepted_tok_per_sec:.1f}" if r is not None else "N/A")
+            row.append(f"{r.output_tok_per_sec:.1f}" if r is not None else "N/A")
         rows.append(row)
     return tabulate(rows, headers=headers, tablefmt="simple", disable_numparse=True)
 
@@ -133,7 +133,7 @@ def format_summary_table(
 ) -> str:
     """Format summary statistics as a table."""
     from tabulate import tabulate
-    headers = ["Variant", "Small-wave avg", "Large-wave avg", "Overall avg"]
+    headers = ["Variant", "Small-wave avg (out tok/s)", "Large-wave avg (out tok/s)", "Overall avg (out tok/s)"]
     rows = [
         [lbl, f"{summaries[lbl].small_avg:.1f}",
          f"{summaries[lbl].large_avg:.1f}",
@@ -161,7 +161,7 @@ def save_results(
         entry: dict = {"index": wave.index, "type": wave.type, "batch": wave.batch}
         for lbl in variant_labels:
             r = by_index[lbl].get(wave.index)
-            entry[lbl] = r.accepted_tok_per_sec if r is not None else None
+            entry[lbl] = r.output_tok_per_sec if r is not None else None
         waves.append(entry)
 
     summary_dict = {
@@ -197,7 +197,7 @@ def plot_results(
 
     # Top panel: per-wave line chart
     for lbl in variant_labels:
-        ys = [r.accepted_tok_per_sec for r in all_wave_results[lbl]]
+        ys = [r.output_tok_per_sec for r in all_wave_results[lbl]]
         ax1.plot(x, ys, marker="o", label=lbl, color=colours.get(lbl, None))
 
     for w in first:
@@ -207,8 +207,8 @@ def plot_results(
     ax1.set_xticks(x)
     ax1.set_xticklabels(x_labels)
     ax1.set_xlabel("Wave")
-    ax1.set_ylabel("Accepted tok/s")
-    ax1.set_title("Per-wave accepted tok/s by variant")
+    ax1.set_ylabel("Output tok/s")
+    ax1.set_title("Per-wave output tok/s by variant")
     ax1.legend()
 
     # Bottom panel: grouped bar chart (small vs large avg)
@@ -220,7 +220,7 @@ def plot_results(
     ax2.bar(x2 + bar_w / 2, large_vals, bar_w, label="large-wave avg", color="#e87c4c")
     ax2.set_xticks(x2)
     ax2.set_xticklabels(variant_labels)
-    ax2.set_ylabel("Accepted tok/s")
+    ax2.set_ylabel("Output tok/s")
     ax2.set_title("Small vs large wave average by variant")
     ax2.legend()
 
@@ -294,7 +294,6 @@ def build_llm(
         model=target_model,
         max_num_seqs=large_batch,
         max_model_len=max_model_len,
-        disable_log_stats=False,
         speculative_config=spec_config,
     )
 
@@ -320,22 +319,15 @@ def run_variant_waves(
     variant: str,
 ) -> list[WaveResult]:
     from vllm import SamplingParams
-    from vllm.v1.metrics.reader import Counter as VllmCounter
 
     print(f"  [{variant}] warming up ...")
     _warmup(llm, waves[0])
 
     results: list[WaveResult] = []
 
-    # Capture the counter baseline after any warm-up so wave 0 delta is clean.
-    prev_accepted = 0
-    for metric in llm.get_metrics():
-        if (metric.name == "vllm:spec_decode_num_accepted_tokens"
-                and isinstance(metric, VllmCounter)):
-            prev_accepted = metric.value
-
     for i, wave_prompts in enumerate(waves):
         wave_type = "small" if i % 2 == 0 else "large"
+        total_output = sum(out_len for _, out_len in wave_prompts)
         vllm_prompts = [{"prompt_token_ids": ids} for ids, _ in wave_prompts]
         sampling_params = [
             SamplingParams(max_tokens=out_len, ignore_eos=True, temperature=0.0)
@@ -346,28 +338,10 @@ def run_variant_waves(
         llm.generate(vllm_prompts, sampling_params)
         elapsed = time.perf_counter() - start
 
-        accepted_count = 0
-        for metric in llm.get_metrics():
-            if (metric.name == "vllm:spec_decode_num_accepted_tokens"
-                    and isinstance(metric, VllmCounter)):
-                accepted_count += metric.value
-
-        delta = accepted_count - prev_accepted
-        prev_accepted = accepted_count
-
-        if delta == 0:
-            import warnings
-            warnings.warn(
-                f"Wave {i} ({wave_type}): accepted token count is 0. "
-                "This may indicate Prometheus multiprocess mode is active "
-                "or speculative decoding is not functioning.",
-                stacklevel=2,
-            )
-
-        tok_per_sec = delta / elapsed if elapsed > 0 else 0.0
+        tok_per_sec = total_output / elapsed if elapsed > 0 else 0.0
         results.append(WaveResult(
             index=i, type=wave_type, batch=len(wave_prompts),
-            accepted_tok_per_sec=tok_per_sec, wall_time_sec=elapsed,
+            output_tok_per_sec=tok_per_sec, wall_time_sec=elapsed,
         ))
         print(f"  [{variant}] wave {i} ({wave_type}, bs={len(wave_prompts)}): "
               f"{tok_per_sec:.1f} tok/s  ({elapsed:.1f}s)")

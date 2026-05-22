@@ -24,11 +24,11 @@ class _MockTokenizer:
 def test_wave_result_fields():
     from benchmark_adaptive_draft import WaveResult
     r = WaveResult(index=0, type="small", batch=4,
-                   accepted_tok_per_sec=142.3, wall_time_sec=1.5)
+                   output_tok_per_sec=142.3, wall_time_sec=1.5)
     assert r.index == 0
     assert r.type == "small"
     assert r.batch == 4
-    assert r.accepted_tok_per_sec == 142.3
+    assert r.output_tok_per_sec == 142.3
     assert r.wall_time_sec == 1.5
 
 
