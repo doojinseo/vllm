@@ -41,6 +41,7 @@ class AdaptiveDraftModelProposer(DraftModelProposer):
         self._low_threshold: int = spec.adaptive_low_threshold
         self._alpha: float = spec.adaptive_ema_alpha
         self._ema: float = 0.0
+        self._prev_batch_size: int = 0
         self._using_primary: bool = False   # start on alt (int8) until EMA rises
         self._primary_model: nn.Module | None = None
         self._alt_model_module: nn.Module | None = None
@@ -209,7 +210,14 @@ class AdaptiveDraftModelProposer(DraftModelProposer):
             common_attn_metadata = kwargs["common_attn_metadata"]
 
         batch_size: int = common_attn_metadata.batch_size()
-        self._ema = self._alpha * batch_size + (1.0 - self._alpha) * self._ema
+        if batch_size > self._prev_batch_size:
+            # Batch grew → new large batch started.  Reset EMA so model
+            # selection reflects the current load immediately instead of
+            # lagging behind the previous wave's decaying batch size.
+            self._ema = float(batch_size)
+        else:
+            self._ema = self._alpha * batch_size + (1.0 - self._alpha) * self._ema
+        self._prev_batch_size = batch_size
 
         # Hysteresis: switch TO primary (fp8) only when EMA rises above
         # high_threshold; switch BACK to alt (int8) only when EMA falls below
