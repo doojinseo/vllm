@@ -241,10 +241,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--small-batch",    type=int,   default=4)
     parser.add_argument("--large-batch",    type=int,   default=32)
-    parser.add_argument("--num-wave-pairs", type=int,   default=4)
+    parser.add_argument("--num-wave-pairs", type=int,   default=8)
     parser.add_argument("--num-spec-tokens",type=int,   default=5)
     parser.add_argument("--threshold",      type=int,   default=8)
-    parser.add_argument("--ema-alpha",      type=float, default=0.1)
+    parser.add_argument("--ema-alpha",      type=float, default=0.3)
     parser.add_argument("--max-model-len",  type=int,   default=4096)
     parser.add_argument("--seed",           type=int,   default=42)
     parser.add_argument("--output", default="adaptive_draft_wave_results.json")
@@ -299,6 +299,21 @@ def build_llm(
     )
 
 
+def _warmup(llm: "LLM", wave_prompts: list[tuple[list[int], int]]) -> None:
+    """Run one short request to trigger JIT kernel compilation before timing.
+
+    The adaptive model disables CUDA graphs so it cannot pre-compile kernels
+    during init the way fixed-quant models do. Without this, wave 0 pays the
+    full JIT cost and appears artificially slow.
+    """
+    from vllm import SamplingParams
+    prompt_ids, out_len = wave_prompts[0]
+    llm.generate(
+        [{"prompt_token_ids": prompt_ids}],
+        [SamplingParams(max_tokens=min(out_len, 32), temperature=0.0)],
+    )
+
+
 def run_variant_waves(
     llm: "LLM",
     waves: list[list[tuple[list[int], int]]],
@@ -307,8 +322,18 @@ def run_variant_waves(
     from vllm import SamplingParams
     from vllm.v1.metrics.reader import Counter as VllmCounter
 
+    if variant == "adaptive":
+        print(f"  [{variant}] warming up JIT kernels ...")
+        _warmup(llm, waves[0])
+
     results: list[WaveResult] = []
+
+    # Capture the counter baseline after any warm-up so wave 0 delta is clean.
     prev_accepted = 0
+    for metric in llm.get_metrics():
+        if (metric.name == "vllm:spec_decode_num_accepted_tokens"
+                and isinstance(metric, VllmCounter)):
+            prev_accepted = metric.value
 
     for i, wave_prompts in enumerate(waves):
         wave_type = "small" if i % 2 == 0 else "large"

@@ -240,10 +240,10 @@ def test_parse_args_defaults(tmp_path):
     args = parse_args(["--dataset", str(fake_dataset)])
     assert args.small_batch == 4
     assert args.large_batch == 32
-    assert args.num_wave_pairs == 4
+    assert args.num_wave_pairs == 8
     assert args.num_spec_tokens == 5
     assert args.threshold == 8
-    assert args.ema_alpha == pytest.approx(0.1)
+    assert args.ema_alpha == pytest.approx(0.3)
     assert args.seed == 42
     assert args.output == "adaptive_draft_wave_results.json"
     assert args.plot is None

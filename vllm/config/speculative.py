@@ -151,6 +151,21 @@ class SpeculativeConfig:
     requires the speculative model be trained to support parallel drafting.
     Only compatible with EAGLE and draft model methods."""
 
+    # Adaptive draft model switching
+    alt_model: str | None = None
+    """Secondary draft model path. When set together with `model`, enables
+    adaptive switching between the two draft models based on observed batch
+    size. Typically the primary model is fp8 (good for large batches) and
+    the alt model is int8/GPTQ (good for small batches)."""
+    adaptive_threshold: int = 8
+    """EMA batch-size threshold for adaptive draft model switching. When the
+    smoothed batch size is <= this value the alt (int8) model is used;
+    otherwise the primary (fp8) model is used."""
+    adaptive_ema_alpha: float = 0.3
+    """EMA decay factor for the batch-size signal used in adaptive switching.
+    Smaller values give more smoothing (less thrashing); larger values react
+    faster to load changes."""
+
     # required configuration params passed from engine
     target_model_config: SkipValidation[ModelConfig] = None  # type: ignore
     """The configuration of the target model."""
@@ -162,6 +177,8 @@ class SpeculativeConfig:
     """The configuration of the draft model initialized internal."""
     draft_parallel_config: SkipValidation[ParallelConfig] = None  # type: ignore
     """The parallel configuration for the draft model initialized internal."""
+    alt_model_config: SkipValidation[ModelConfig] = None  # type: ignore
+    """The configuration of the alt draft model (for adaptive switching)."""
 
     # Suffix decoding configuration
     suffix_decoding_max_tree_depth: int = 24
@@ -803,6 +820,30 @@ class SpeculativeConfig:
                         self.target_parallel_config, self.draft_tensor_parallel_size
                     )
                 )
+
+        # Build alt_model_config for adaptive draft model switching
+        if self.alt_model is not None and self.draft_model_config is not None:
+            self.alt_model_config = ModelConfig(
+                model=self.alt_model,
+                runner="draft",
+                tokenizer=self.target_model_config.tokenizer,
+                tokenizer_mode=self.target_model_config.tokenizer_mode,
+                trust_remote_code=self.target_model_config.trust_remote_code,
+                allowed_local_media_path=self.target_model_config.allowed_local_media_path,
+                allowed_media_domains=self.target_model_config.allowed_media_domains,
+                dtype=self.target_model_config.dtype,
+                seed=self.target_model_config.seed,
+                revision=None,
+                code_revision=None,
+                tokenizer_revision=self.target_model_config.tokenizer_revision,
+                max_model_len=self.draft_model_config.max_model_len,
+                spec_target_max_model_len=self.target_model_config.max_model_len,
+                quantization=None,
+                enforce_eager=self.target_model_config.enforce_eager,
+                max_logprobs=self.target_model_config.max_logprobs,
+                hf_overrides=SpeculativeConfig.hf_config_override,
+                config_format=self.target_model_config.config_format,
+            )
         return self
 
     def _validate_suffix_decoding(self):
