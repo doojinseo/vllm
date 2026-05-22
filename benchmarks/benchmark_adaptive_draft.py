@@ -23,6 +23,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import torch
+
 
 @dataclass
 class WaveResult:
@@ -246,3 +248,180 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--plot",   default=None,
                         help="Plot path (default: --output stem + .png)")
     return parser.parse_args(argv)
+
+
+def _clear_vllm_compile_cache() -> None:
+    cache_dir = Path.home() / ".cache" / "vllm" / "torch_compile_cache"
+    if cache_dir.exists():
+        shutil.rmtree(cache_dir, ignore_errors=True)
+
+
+def build_llm(
+    variant: str,
+    target_model: str,
+    draft_model_base: str,
+    draft_model_fp8: str,
+    draft_model_int8: str,
+    large_batch: int,
+    num_spec_tokens: int,
+    max_model_len: int,
+    threshold: int,
+    ema_alpha: float,
+) -> "LLM":
+    from vllm import LLM
+
+    draft_model = {
+        "base":     draft_model_base,
+        "int8":     draft_model_int8,
+        "fp8":      draft_model_fp8,
+        "adaptive": draft_model_fp8,
+    }[variant]
+
+    spec_config: dict = {
+        "method": "draft_model",
+        "model": draft_model,
+        "num_speculative_tokens": num_spec_tokens,
+    }
+    if variant == "adaptive":
+        spec_config["alt_model"] = draft_model_int8
+        spec_config["adaptive_threshold"] = threshold
+        spec_config["adaptive_ema_alpha"] = ema_alpha
+
+    return LLM(
+        model=target_model,
+        max_num_seqs=large_batch,
+        max_model_len=max_model_len,
+        disable_log_stats=False,
+        speculative_config=spec_config,
+    )
+
+
+def run_variant_waves(
+    llm: "LLM",
+    waves: list[list[tuple[list[int], int]]],
+    variant: str,
+) -> list[WaveResult]:
+    from vllm import SamplingParams
+    from vllm.v1.metrics.reader import Counter as VllmCounter
+
+    results: list[WaveResult] = []
+    prev_accepted = 0
+
+    for i, wave_prompts in enumerate(waves):
+        wave_type = "small" if i % 2 == 0 else "large"
+        vllm_prompts = [{"prompt_token_ids": ids} for ids, _ in wave_prompts]
+        sampling_params = [
+            SamplingParams(max_tokens=out_len, ignore_eos=True, temperature=0.0)
+            for _, out_len in wave_prompts
+        ]
+
+        start = time.perf_counter()
+        llm.generate(vllm_prompts, sampling_params)
+        elapsed = time.perf_counter() - start
+
+        accepted_count = 0
+        for metric in llm.get_metrics():
+            if (metric.name == "vllm:spec_decode_num_accepted_tokens"
+                    and isinstance(metric, VllmCounter)):
+                accepted_count += metric.value
+
+        delta = accepted_count - prev_accepted
+        prev_accepted = accepted_count
+
+        tok_per_sec = delta / elapsed if elapsed > 0 else 0.0
+        results.append(WaveResult(
+            index=i, type=wave_type, batch=len(wave_prompts),
+            accepted_tok_per_sec=tok_per_sec, wall_time_sec=elapsed,
+        ))
+        print(f"  [{variant}] wave {i} ({wave_type}, bs={len(wave_prompts)}): "
+              f"{tok_per_sec:.1f} tok/s  ({elapsed:.1f}s)")
+
+    return results
+
+
+def main() -> None:
+    args = parse_args()
+
+    if not Path(args.dataset).exists():
+        raise FileNotFoundError(f"Dataset not found: {args.dataset}")
+
+    from transformers import AutoTokenizer
+
+    print(f"Loading tokenizer for {args.target_model} ...")
+    tokenizer = AutoTokenizer.from_pretrained(args.target_model)
+
+    print(f"Pre-sampling waves (small={args.small_batch}, large={args.large_batch}, "
+          f"pairs={args.num_wave_pairs}) ...")
+    waves = pre_sample_waves(
+        dataset_path=args.dataset,
+        small_batch=args.small_batch,
+        large_batch=args.large_batch,
+        num_wave_pairs=args.num_wave_pairs,
+        max_model_len=args.max_model_len,
+        tokenizer=tokenizer,
+        seed=args.seed,
+    )
+    for i, w in enumerate(waves):
+        wtype = "small" if i % 2 == 0 else "large"
+        print(f"  wave {i} ({wtype}): {len(w)} prompts")
+
+    variant_labels = ["base", "int8", "fp8", "adaptive"]
+    all_wave_results: dict[str, list[WaveResult]] = {}
+    summaries: dict[str, VariantSummary] = {}
+
+    for variant in variant_labels:
+        print(f"\n{'=' * 60}")
+        print(f"Variant: {variant}")
+        print(f"{'=' * 60}")
+        _clear_vllm_compile_cache()
+        llm = build_llm(
+            variant=variant,
+            target_model=args.target_model,
+            draft_model_base=args.draft_model_base,
+            draft_model_fp8=args.draft_model_fp8,
+            draft_model_int8=args.draft_model_int8,
+            large_batch=args.large_batch,
+            num_spec_tokens=args.num_spec_tokens,
+            max_model_len=args.max_model_len,
+            threshold=args.threshold,
+            ema_alpha=args.ema_alpha,
+        )
+        try:
+            wave_results = run_variant_waves(llm, waves, variant)
+        finally:
+            del llm
+            gc.collect()
+            torch.cuda.empty_cache()
+
+        all_wave_results[variant] = wave_results
+        summaries[variant] = compute_summary(wave_results)
+
+    print("\n" + "=" * 60)
+    print("Per-wave results (accepted tok/s)")
+    print("=" * 60)
+    print(format_wave_table(all_wave_results, variant_labels))
+
+    print("\n" + "=" * 60)
+    print("Summary")
+    print("=" * 60)
+    print(format_summary_table(summaries, variant_labels))
+
+    config = {
+        "small_batch":     args.small_batch,
+        "large_batch":     args.large_batch,
+        "num_wave_pairs":  args.num_wave_pairs,
+        "num_spec_tokens": args.num_spec_tokens,
+        "threshold":       args.threshold,
+        "ema_alpha":       args.ema_alpha,
+        "target_model":    args.target_model,
+    }
+    save_results(args.output, config, all_wave_results, summaries, variant_labels)
+    print(f"\nResults saved to {args.output}")
+
+    plot_path = args.plot or str(Path(args.output).with_suffix(".png"))
+    plot_results(plot_path, all_wave_results, summaries, variant_labels)
+    print(f"Plot saved to {plot_path}")
+
+
+if __name__ == "__main__":
+    main()
