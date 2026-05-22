@@ -151,6 +151,104 @@ def find_crossover(
     return crossover
 
 
+def _unique_path(path: str) -> str:
+    p = Path(path)
+    if not p.exists():
+        return path
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    return str(p.with_stem(f"{p.stem}_{stamp}"))
+
+
+def save_results(
+    output_path: str,
+    config: dict,
+    results: dict,
+    variant_labels: list,
+    spec_tokens_list: list,
+    batch_sizes: list,
+    crossover: dict,
+) -> None:
+    import json as _json
+
+    def _serialize(r):
+        if r is None:
+            return None
+        return {
+            "output_tok_per_sec": r.output_tok_per_sec,
+            "total_output_tokens": r.total_output_tokens,
+            "wall_time_sec": r.wall_time_sec,
+        }
+
+    data = {
+        "config": config,
+        "results": {
+            str(k): {
+                str(bs): {
+                    lbl: _serialize(results[k][bs].get(lbl))
+                    for lbl in variant_labels
+                }
+                for bs in batch_sizes
+            }
+            for k in spec_tokens_list
+        },
+        "crossover": {str(k): v for k, v in crossover.items()},
+    }
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w") as f:
+        _json.dump(data, f, indent=2)
+
+
+def plot_results(
+    plot_path: str,
+    results: dict,
+    variant_labels: list,
+    spec_tokens_list: list,
+    batch_sizes: list,
+    crossover: dict,
+) -> None:
+    import matplotlib.pyplot as plt
+
+    colours = {
+        "base": "C0", "draft_base": "C1", "int8": "C2", "fp8": "C3",
+    }
+    styles = {"base": "--", "draft_base": "-.", "int8": "-", "fp8": "-"}
+    n = len(spec_tokens_list)
+    fig, axes = plt.subplots(n, 1, figsize=(10, 5 * n), squeeze=False)
+
+    for row, k in enumerate(spec_tokens_list):
+        ax = axes[row][0]
+        for lbl in variant_labels:
+            xs = []
+            ys = []
+            for bs in batch_sizes:
+                r = results[k][bs].get(lbl)
+                if r is not None:
+                    xs.append(bs)
+                    ys.append(r.output_tok_per_sec)
+            ax.plot(xs, ys, marker="o",
+                    color=colours.get(lbl),
+                    linestyle=styles.get(lbl, "-"),
+                    label=lbl)
+
+        cx = crossover.get(k)
+        if cx is not None:
+            ax.axvline(cx, color="red", linestyle=":", linewidth=1.5,
+                       label=f"crossover bs={cx}")
+
+        ax.set_xscale("log", base=2)
+        ax.set_xticks(batch_sizes)
+        ax.set_xticklabels([str(b) for b in batch_sizes])
+        ax.set_xlabel("Batch size")
+        ax.set_ylabel("Output tok/s")
+        ax.set_title(f"Output tok/s vs batch size  (num_spec_tokens={k})")
+        ax.legend()
+
+    plt.tight_layout()
+    Path(plot_path).parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(plot_path, dpi=150)
+    plt.close()
+
+
 def print_per_k_table(
     results: dict[int, dict[int, dict[str, VariantResult | None]]],
     batch_sizes: list[int],
@@ -193,7 +291,7 @@ def print_per_bs_table(
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Sweep num_spec_tokens × batch_size × quantization variant."
     )
@@ -213,7 +311,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-model-len", type=int, default=4096)
     parser.add_argument("--seed", type=int, default=42)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
@@ -310,6 +408,32 @@ def main() -> None:
             low = bs // 2
             print(f"  k={k}: fp8 beats int8 starting at batch_size={bs}")
             print(f"         Recommended: --threshold {bs} --low-threshold {low}")
+
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    out_dir = Path("results/sweep")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    json_path = str(out_dir / f"spec_decode_sweep_{stamp}.json")
+    png_path  = str(out_dir / f"spec_decode_sweep_{stamp}.png")
+
+    config = {
+        "target_model":     args.target_model,
+        "draft_model_base": args.draft_model_base,
+        "draft_model_fp8":  args.draft_model_fp8,
+        "draft_model_int8": args.draft_model_int8,
+        "spec_tokens":      args.spec_tokens,
+        "batch_sizes":      args.batch_sizes,
+        "num_prompts":      args.num_prompts,
+        "max_model_len":    args.max_model_len,
+        "seed":             args.seed,
+        "variants":         variant_labels,
+    }
+    save_results(json_path, config, results, variant_labels,
+                 args.spec_tokens, args.batch_sizes, crossover)
+    print(f"\nResults saved to {json_path}")
+
+    plot_results(png_path, results, variant_labels,
+                 args.spec_tokens, args.batch_sizes, crossover)
+    print(f"Plot saved to {png_path}")
 
 
 if __name__ == "__main__":

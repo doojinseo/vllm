@@ -71,3 +71,72 @@ def test_find_crossover_missing_variant():
     }
     crossover = find_crossover(results, [4, 32], [5])
     assert crossover[5] == 32
+
+
+@pytest.mark.benchmark
+def test_save_results_json_structure(tmp_path):
+    import json as _json
+    from benchmark_spec_decode_sweep import VariantResult, save_results
+    def r(tok):
+        return VariantResult(output_tok_per_sec=tok,
+                             total_output_tokens=100, wall_time_sec=1.0)
+    results = {
+        5: {
+            4:  {"int8": r(200.0), "fp8": r(190.0), "base": r(150.0), "draft_base": r(180.0)},
+            32: {"int8": r(400.0), "fp8": r(410.0), "base": r(300.0), "draft_base": r(380.0)},
+        }
+    }
+    crossover = {5: 32}
+    config = {"target_model": "M/T", "spec_tokens": [5], "batch_sizes": [4, 32]}
+    out = tmp_path / "out.json"
+
+    save_results(
+        str(out), config, results,
+        ["base", "draft_base", "int8", "fp8"], [5], [4, 32], crossover,
+    )
+
+    data = _json.loads(out.read_text())
+    assert data["config"]["target_model"] == "M/T"
+    assert data["crossover"]["5"] == 32
+    assert data["results"]["5"]["4"]["fp8"]["output_tok_per_sec"] == pytest.approx(190.0)
+    assert data["results"]["5"]["32"]["int8"]["total_output_tokens"] == 100
+
+
+@pytest.mark.benchmark
+def test_save_results_none_variant(tmp_path):
+    import json as _json
+    from benchmark_spec_decode_sweep import VariantResult, save_results
+    results = {
+        5: {4: {"int8": VariantResult(200.0, 100, 1.0), "fp8": None}},
+    }
+    config = {"spec_tokens": [5], "batch_sizes": [4]}
+    out = tmp_path / "out.json"
+    save_results(str(out), config, results, ["int8", "fp8"], [5], [4], {5: None})
+    data = _json.loads(out.read_text())
+    assert data["results"]["5"]["4"]["fp8"] is None
+
+
+@pytest.mark.benchmark
+def test_plot_results_creates_file(tmp_path):
+    import matplotlib
+    matplotlib.use("Agg")
+    from benchmark_spec_decode_sweep import VariantResult, plot_results
+    def r(tok):
+        return VariantResult(output_tok_per_sec=tok,
+                             total_output_tokens=100, wall_time_sec=1.0)
+    results = {
+        5: {
+            4:  {"base": r(150.0), "draft_base": r(180.0),
+                 "int8": r(200.0), "fp8": r(190.0)},
+            32: {"base": r(300.0), "draft_base": r(360.0),
+                 "int8": r(400.0), "fp8": r(410.0)},
+        }
+    }
+    out = tmp_path / "plot.png"
+    plot_results(
+        str(out), results,
+        ["base", "draft_base", "int8", "fp8"],
+        [5], [4, 32], crossover={5: 32},
+    )
+    assert out.exists()
+    assert out.stat().st_size > 0
