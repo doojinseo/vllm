@@ -158,9 +158,16 @@ class SpeculativeConfig:
     size. Typically the primary model is fp8 (good for large batches) and
     the alt model is int8/GPTQ (good for small batches)."""
     adaptive_threshold: int = 8
-    """EMA batch-size threshold for adaptive draft model switching. When the
-    smoothed batch size is <= this value the alt (int8) model is used;
-    otherwise the primary (fp8) model is used."""
+    """EMA batch-size threshold for switching INTO the primary (fp8) model.
+    When the smoothed batch size rises above this value the primary model is
+    activated. Combined with adaptive_low_threshold this creates a hysteresis
+    band that prevents thrashing during batch shrinkage within a wave."""
+    adaptive_low_threshold: int = 4
+    """EMA batch-size threshold for switching BACK to the alt (int8) model.
+    Must be <= adaptive_threshold. The gap between the two thresholds is the
+    hysteresis band: once the primary model is active it stays active until
+    EMA drops below this value, preventing premature back-switching as the
+    batch shrinks during the tail of a large-batch wave."""
     adaptive_ema_alpha: float = 0.3
     """EMA decay factor for the batch-size signal used in adaptive switching.
     Smaller values give more smoothing (less thrashing); larger values react

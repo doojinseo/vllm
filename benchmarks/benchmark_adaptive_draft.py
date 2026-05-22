@@ -243,7 +243,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--large-batch",    type=int,   default=32)
     parser.add_argument("--num-wave-pairs", type=int,   default=8)
     parser.add_argument("--num-spec-tokens",type=int,   default=5)
-    parser.add_argument("--threshold",      type=int,   default=8)
+    parser.add_argument("--threshold",      type=int,   default=8,
+                        help="EMA threshold for switching TO fp8 (high threshold)")
+    parser.add_argument("--low-threshold",  type=int,   default=4,
+                        help="EMA threshold for switching BACK to int8 (low threshold)")
     parser.add_argument("--ema-alpha",      type=float, default=0.3)
     parser.add_argument("--max-model-len",  type=int,   default=4096)
     parser.add_argument("--seed",           type=int,   default=42)
@@ -269,6 +272,7 @@ def build_llm(
     num_spec_tokens: int,
     max_model_len: int,
     threshold: int,
+    low_threshold: int,
     ema_alpha: float,
 ) -> "LLM":
     from vllm import LLM
@@ -288,6 +292,7 @@ def build_llm(
     if variant == "adaptive":
         spec_config["alt_model"] = draft_model_int8
         spec_config["adaptive_threshold"] = threshold
+        spec_config["adaptive_low_threshold"] = low_threshold
         spec_config["adaptive_ema_alpha"] = ema_alpha
 
     return LLM(
@@ -403,6 +408,7 @@ def main() -> None:
             num_spec_tokens=args.num_spec_tokens,
             max_model_len=args.max_model_len,
             threshold=args.threshold,
+            low_threshold=args.low_threshold,
             ema_alpha=args.ema_alpha,
         )
         try:
@@ -416,7 +422,7 @@ def main() -> None:
         summaries[variant] = compute_summary(wave_results)
 
     print("\n" + "=" * 60)
-    print("Per-wave results (accepted tok/s)")
+    print("Per-wave results (output tok/s)")
     print("=" * 60)
     print(format_wave_table(all_wave_results, variant_labels))
 
@@ -431,6 +437,7 @@ def main() -> None:
         "num_wave_pairs":    args.num_wave_pairs,
         "num_spec_tokens":   args.num_spec_tokens,
         "threshold":         args.threshold,
+        "low_threshold":     args.low_threshold,
         "ema_alpha":         args.ema_alpha,
         "target_model":      args.target_model,
         "draft_model_base":  args.draft_model_base,
