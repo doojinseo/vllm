@@ -38,3 +38,29 @@ class VariantSummary:
     small_avg: float
     large_avg: float
     overall: float
+
+
+def load_sharegpt(
+    dataset_path: str,
+    num_samples: int,
+    max_model_len: int,
+    tokenizer,
+    seed: int,
+) -> list[tuple[list[int], int]]:
+    with open(dataset_path, encoding="utf-8") as f:
+        data = json.load(f)
+    data = [d for d in data if len(d.get("conversations", [])) >= 2]
+    random.seed(seed)
+    random.shuffle(data)
+    results: list[tuple[list[int], int]] = []
+    for entry in data:
+        if len(results) >= num_samples:
+            break
+        prompt_ids: list[int] = tokenizer(entry["conversations"][0]["value"]).input_ids
+        completion_ids: list[int] = tokenizer(entry["conversations"][1]["value"]).input_ids
+        if len(prompt_ids) < 4 or len(completion_ids) < 4:
+            continue
+        if len(prompt_ids) + len(completion_ids) > max_model_len:
+            continue
+        results.append((prompt_ids, len(completion_ids)))
+    return results

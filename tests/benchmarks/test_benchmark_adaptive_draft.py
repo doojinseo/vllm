@@ -39,3 +39,33 @@ def test_variant_summary_fields():
     assert s.small_avg == 100.0
     assert s.large_avg == 300.0
     assert s.overall == 200.0
+
+
+@pytest.mark.benchmark
+def test_load_sharegpt_basic(tmp_path):
+    import json as _json
+    from benchmark_adaptive_draft import load_sharegpt
+    data = [{"conversations": [
+        {"value": " ".join(["word"] * 10)},
+        {"value": " ".join(["word"] * 10)},
+    ]}]
+    path = tmp_path / "sg.json"
+    path.write_text(_json.dumps(data))
+    result = load_sharegpt(str(path), num_samples=10, max_model_len=4096,
+                           tokenizer=_MockTokenizer(), seed=42)
+    assert len(result) == 1
+    prompt_ids, output_len = result[0]
+    assert len(prompt_ids) == 10
+    assert output_len == 10
+
+
+@pytest.mark.benchmark
+def test_load_sharegpt_filters_short(tmp_path):
+    import json as _json
+    from benchmark_adaptive_draft import load_sharegpt
+    data = [{"conversations": [{"value": "hi"}, {"value": "ok"}]}]
+    path = tmp_path / "sg.json"
+    path.write_text(_json.dumps(data))
+    result = load_sharegpt(str(path), num_samples=10, max_model_len=4096,
+                           tokenizer=_MockTokenizer(), seed=42)
+    assert result == []
