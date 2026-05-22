@@ -24,6 +24,7 @@ import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import torch
 from tabulate import tabulate
@@ -86,7 +87,7 @@ def run_variant(
 
     llm: LLM | None = None
     try:
-        kwargs: dict = dict(
+        kwargs: dict[str, Any] = dict(
             model=target_model,
             max_num_seqs=max_num_seqs,
             max_model_len=max_model_len,
@@ -140,7 +141,7 @@ def print_per_k_table(
         headers = ["batch_size"] + [f"k={k}" for k in spec_tokens_list]
         rows = []
         for bs in batch_sizes:
-            row: list = [bs]
+            row: list[Any] = [bs]
             for k in spec_tokens_list:
                 row.append(_fmt(results[k][bs].get(label)))
             rows.append(row)
@@ -160,7 +161,7 @@ def print_per_bs_table(
         headers = ["batch_size"] + [f"{lbl} (tok/s)" for lbl in variant_labels]
         rows = []
         for bs in batch_sizes:
-            row: list = [bs]
+            row: list[Any] = [bs]
             for label in variant_labels:
                 row.append(_fmt(results[k][bs].get(label)))
             rows.append(row)
