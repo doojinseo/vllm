@@ -124,3 +124,54 @@ def test_compute_summary_only_small():
     assert s.small_avg == 100.0
     assert s.large_avg == 0.0
     assert s.overall   == 100.0
+
+
+LABELS = ["fp8", "int8", "adaptive"]
+
+
+@pytest.mark.benchmark
+def test_format_wave_table_headers_and_values():
+    from benchmark_adaptive_draft import WaveResult, format_wave_table
+
+    all_results = {
+        "fp8":      [WaveResult(0, "small", 4, 130.0, 1.0),
+                     WaveResult(1, "large", 32, 330.0, 2.0)],
+        "int8":     [WaveResult(0, "small", 4, 155.0, 1.0),
+                     WaveResult(1, "large", 32, 275.0, 2.0)],
+        "adaptive": [WaveResult(0, "small", 4, 154.0, 1.0),
+                     WaveResult(1, "large", 32, 329.0, 2.0)],
+    }
+    table = format_wave_table(all_results, LABELS)
+    assert "small" in table
+    assert "large" in table
+    assert "130.0" in table
+    assert "329.0" in table
+
+
+@pytest.mark.benchmark
+def test_format_wave_table_row_order():
+    from benchmark_adaptive_draft import WaveResult, format_wave_table
+
+    r = WaveResult(0, "small", 4, 1.0, 1.0)
+    r2 = WaveResult(1, "large", 32, 2.0, 1.0)
+    all_results = {"fp8": [r, r2], "int8": [r, r2], "adaptive": [r, r2]}
+    table = format_wave_table(all_results, LABELS)
+    lines = [l for l in table.splitlines() if l.strip() and not l.strip().startswith("-")]
+    idx_col = [l.split()[0] for l in lines if l.split()[0].isdigit()]
+    assert idx_col.index("0") < idx_col.index("1")
+
+
+@pytest.mark.benchmark
+def test_format_summary_table_contains_all_variants():
+    from benchmark_adaptive_draft import VariantSummary, format_summary_table
+
+    summaries = {
+        "fp8":      VariantSummary(130.0, 330.0, 230.0),
+        "int8":     VariantSummary(155.0, 275.0, 215.0),
+        "adaptive": VariantSummary(154.0, 329.0, 241.5),
+    }
+    table = format_summary_table(summaries, LABELS)
+    for lbl in LABELS:
+        assert lbl in table
+    assert "130.0" in table
+    assert "241.5" in table

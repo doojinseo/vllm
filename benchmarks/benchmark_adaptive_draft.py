@@ -100,3 +100,40 @@ def compute_summary(wave_results: list[WaveResult]) -> VariantSummary:
         large_avg=sum(large) / len(large) if large else 0.0,
         overall=sum(all_vals) / len(all_vals) if all_vals else 0.0,
     )
+
+
+def format_wave_table(
+    all_wave_results: dict[str, list[WaveResult]],
+    variant_labels: list[str],
+) -> str:
+    """Format per-wave results as a table."""
+    from tabulate import tabulate
+    headers = ["Wave", "Type", "Batch"] + [f"{lbl} (tok/s)" for lbl in variant_labels]
+    first = next(iter(all_wave_results.values()))
+    rows = []
+    for wave in first:
+        row: list = [wave.index, wave.type, wave.batch]
+        for lbl in variant_labels:
+            results = all_wave_results.get(lbl, [])
+            row.append(
+                f"{results[wave.index].accepted_tok_per_sec:.1f}"
+                if wave.index < len(results) else "N/A"
+            )
+        rows.append(row)
+    return tabulate(rows, headers=headers, tablefmt="simple", disable_numparse=True)
+
+
+def format_summary_table(
+    summaries: dict[str, VariantSummary],
+    variant_labels: list[str],
+) -> str:
+    """Format summary statistics as a table."""
+    from tabulate import tabulate
+    headers = ["Variant", "Small-wave avg", "Large-wave avg", "Overall avg"]
+    rows = [
+        [lbl, f"{summaries[lbl].small_avg:.1f}",
+         f"{summaries[lbl].large_avg:.1f}",
+         f"{summaries[lbl].overall:.1f}"]
+        for lbl in variant_labels
+    ]
+    return tabulate(rows, headers=headers, tablefmt="simple", disable_numparse=True)
