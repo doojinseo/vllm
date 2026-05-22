@@ -245,7 +245,7 @@ def test_parse_args_defaults(tmp_path):
     assert args.threshold == 8
     assert args.ema_alpha == pytest.approx(0.3)
     assert args.seed == 42
-    assert args.output == "adaptive_draft_wave_results.json"
+    assert args.output == "results/adaptive_draft_wave_results.json"
     assert args.plot is None
 
 

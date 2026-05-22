@@ -247,7 +247,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--ema-alpha",      type=float, default=0.3)
     parser.add_argument("--max-model-len",  type=int,   default=4096)
     parser.add_argument("--seed",           type=int,   default=42)
-    parser.add_argument("--output", default="adaptive_draft_wave_results.json")
+    parser.add_argument("--output", default="results/adaptive_draft_wave_results.json")
     parser.add_argument("--plot",   default=None,
                         help="Plot path (default: --output stem + .png)")
     return parser.parse_args(argv)
@@ -455,6 +455,7 @@ def main() -> None:
         "draft_model_fp8":   args.draft_model_fp8,
         "draft_model_int8":  args.draft_model_int8,
     }
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     save_results(args.output, config, all_wave_results, summaries, variant_labels)
     print(f"\nResults saved to {args.output}")
 
