@@ -205,3 +205,26 @@ def test_save_results_json_structure(tmp_path):
     assert data["waves"][1]["int8"] == pytest.approx(275.0)
     assert data["summary"]["fp8"]["small_avg"] == pytest.approx(130.0)
     assert data["summary"]["int8"]["overall"] == pytest.approx(215.0)
+
+
+@pytest.mark.benchmark
+def test_plot_results_creates_file(tmp_path):
+    import matplotlib
+    matplotlib.use("Agg")  # non-interactive, no display required
+    from benchmark_adaptive_draft import WaveResult, VariantSummary, plot_results
+
+    labels = ["fp8", "int8", "adaptive"]
+    all_wave_results = {
+        lbl: [
+            WaveResult(0, "small", 4,  130.0, 1.0),
+            WaveResult(1, "large", 32, 330.0, 2.0),
+        ]
+        for lbl in labels
+    }
+    summaries = {lbl: VariantSummary(130.0, 330.0, 230.0) for lbl in labels}
+    out = tmp_path / "plot.png"
+
+    plot_results(str(out), all_wave_results, summaries, labels)
+
+    assert out.exists()
+    assert out.stat().st_size > 0

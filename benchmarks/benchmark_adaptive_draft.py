@@ -171,3 +171,54 @@ def save_results(
     with open(output_path, "w") as f:
         json.dump({"config": config, "waves": waves, "summary": summary_dict},
                   f, indent=2)
+
+
+def plot_results(
+    plot_path: str,
+    all_wave_results: dict[str, list[WaveResult]],
+    summaries: dict[str, VariantSummary],
+    variant_labels: list[str],
+) -> None:
+    """Plot per-wave results and summary statistics."""
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    colours = {"base": "C0", "int8": "C1", "fp8": "C2", "adaptive": "C3"}
+    first = next(iter(all_wave_results.values()))
+    x = [w.index for w in first]
+    x_labels = [f"{'S' if w.type == 'small' else 'L'}{w.index}" for w in first]
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
+
+    # Top panel: per-wave line chart
+    for lbl in variant_labels:
+        ys = [r.accepted_tok_per_sec for r in all_wave_results[lbl]]
+        ax1.plot(x, ys, marker="o", label=lbl, color=colours.get(lbl, None))
+
+    for w in first:
+        shade = "#d0e8ff" if w.type == "small" else "#ffe8d0"
+        ax1.axvspan(w.index - 0.5, w.index + 0.5, color=shade, alpha=0.3, zorder=0)
+
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(x_labels)
+    ax1.set_xlabel("Wave")
+    ax1.set_ylabel("Accepted tok/s")
+    ax1.set_title("Per-wave accepted tok/s by variant")
+    ax1.legend()
+
+    # Bottom panel: grouped bar chart (small vs large avg)
+    bar_w = 0.35
+    x2 = np.arange(len(variant_labels))
+    small_vals = [summaries[lbl].small_avg for lbl in variant_labels]
+    large_vals = [summaries[lbl].large_avg for lbl in variant_labels]
+    ax2.bar(x2 - bar_w / 2, small_vals, bar_w, label="small-wave avg", color="#4c9be8")
+    ax2.bar(x2 + bar_w / 2, large_vals, bar_w, label="large-wave avg", color="#e87c4c")
+    ax2.set_xticks(x2)
+    ax2.set_xticklabels(variant_labels)
+    ax2.set_ylabel("Accepted tok/s")
+    ax2.set_title("Small vs large wave average by variant")
+    ax2.legend()
+
+    plt.tight_layout()
+    plt.savefig(plot_path, dpi=150)
+    plt.close()
