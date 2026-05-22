@@ -322,9 +322,8 @@ def run_variant_waves(
     from vllm import SamplingParams
     from vllm.v1.metrics.reader import Counter as VllmCounter
 
-    if variant == "adaptive":
-        print(f"  [{variant}] warming up JIT kernels ...")
-        _warmup(llm, waves[0])
+    print(f"  [{variant}] warming up ...")
+    _warmup(llm, waves[0])
 
     results: list[WaveResult] = []
 
