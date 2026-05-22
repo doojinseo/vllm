@@ -97,3 +97,30 @@ def test_pre_sample_waves_count_and_sizes(tmp_path):
         expected_max = 4 if i % 2 == 0 else 16
         assert len(wave) <= expected_max
         assert len(wave) > 0
+
+
+@pytest.mark.benchmark
+def test_compute_summary():
+    from benchmark_adaptive_draft import WaveResult, compute_summary
+
+    waves = [
+        WaveResult(0, "small", 4,  100.0, 1.0),
+        WaveResult(1, "large", 32, 300.0, 2.0),
+        WaveResult(2, "small", 4,  120.0, 1.0),
+        WaveResult(3, "large", 32, 280.0, 2.0),
+    ]
+    s = compute_summary(waves)
+    assert s.small_avg == pytest.approx(110.0)
+    assert s.large_avg == pytest.approx(290.0)
+    assert s.overall  == pytest.approx(200.0)
+
+
+@pytest.mark.benchmark
+def test_compute_summary_only_small():
+    from benchmark_adaptive_draft import WaveResult, compute_summary
+
+    waves = [WaveResult(0, "small", 4, 100.0, 1.0)]
+    s = compute_summary(waves)
+    assert s.small_avg == 100.0
+    assert s.large_avg == 0.0
+    assert s.overall   == 100.0

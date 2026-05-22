@@ -88,3 +88,15 @@ def pre_sample_waves(
         )
         waves.append(prompts)
     return waves
+
+
+def compute_summary(wave_results: list[WaveResult]) -> VariantSummary:
+    """Compute summary statistics across all waves."""
+    small = [r.accepted_tok_per_sec for r in wave_results if r.type == "small"]
+    large = [r.accepted_tok_per_sec for r in wave_results if r.type == "large"]
+    all_vals = [r.accepted_tok_per_sec for r in wave_results]
+    return VariantSummary(
+        small_avg=sum(small) / len(small) if small else 0.0,
+        large_avg=sum(large) / len(large) if large else 0.0,
+        overall=sum(all_vals) / len(all_vals) if all_vals else 0.0,
+    )
