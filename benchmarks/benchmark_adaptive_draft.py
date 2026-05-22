@@ -137,3 +137,37 @@ def format_summary_table(
         for lbl in variant_labels
     ]
     return tabulate(rows, headers=headers, tablefmt="simple", disable_numparse=True)
+
+
+def save_results(
+    output_path: str,
+    config: dict,
+    all_wave_results: dict[str, list[WaveResult]],
+    summaries: dict[str, VariantSummary],
+    variant_labels: list[str],
+) -> None:
+    """Save results to JSON file."""
+    first = next(iter(all_wave_results.values()))
+    waves = []
+    for wave in first:
+        entry: dict = {"index": wave.index, "type": wave.type, "batch": wave.batch}
+        for lbl in variant_labels:
+            results = all_wave_results.get(lbl, [])
+            entry[lbl] = (
+                results[wave.index].accepted_tok_per_sec
+                if wave.index < len(results) else None
+            )
+        waves.append(entry)
+
+    summary_dict = {
+        lbl: {
+            "small_avg": summaries[lbl].small_avg,
+            "large_avg": summaries[lbl].large_avg,
+            "overall":   summaries[lbl].overall,
+        }
+        for lbl in variant_labels
+    }
+
+    with open(output_path, "w") as f:
+        json.dump({"config": config, "waves": waves, "summary": summary_dict},
+                  f, indent=2)

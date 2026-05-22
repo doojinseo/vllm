@@ -175,3 +175,33 @@ def test_format_summary_table_contains_all_variants():
         assert lbl in table
     assert "130.0" in table
     assert "241.5" in table
+
+
+@pytest.mark.benchmark
+def test_save_results_json_structure(tmp_path):
+    import json as _json
+    from benchmark_adaptive_draft import WaveResult, VariantSummary, save_results
+
+    all_wave_results = {
+        "fp8": [WaveResult(0, "small", 4, 130.0, 1.0),
+                WaveResult(1, "large", 32, 330.0, 2.0)],
+        "int8": [WaveResult(0, "small", 4, 155.0, 1.0),
+                 WaveResult(1, "large", 32, 275.0, 2.0)],
+    }
+    summaries = {
+        "fp8":  VariantSummary(130.0, 330.0, 230.0),
+        "int8": VariantSummary(155.0, 275.0, 215.0),
+    }
+    config = {"small_batch": 4, "large_batch": 32, "num_wave_pairs": 1}
+    out = tmp_path / "results.json"
+
+    save_results(str(out), config, all_wave_results, summaries, ["fp8", "int8"])
+
+    data = _json.loads(out.read_text())
+    assert data["config"]["small_batch"] == 4
+    assert len(data["waves"]) == 2
+    assert data["waves"][0]["type"] == "small"
+    assert data["waves"][0]["fp8"] == pytest.approx(130.0)
+    assert data["waves"][1]["int8"] == pytest.approx(275.0)
+    assert data["summary"]["fp8"]["small_avg"] == pytest.approx(130.0)
+    assert data["summary"]["int8"]["overall"] == pytest.approx(215.0)
