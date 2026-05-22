@@ -69,3 +69,31 @@ def test_load_sharegpt_filters_short(tmp_path):
     result = load_sharegpt(str(path), num_samples=10, max_model_len=4096,
                            tokenizer=_MockTokenizer(), seed=42)
     assert result == []
+
+
+@pytest.mark.benchmark
+def test_pre_sample_waves_count_and_sizes(tmp_path):
+    import json as _json
+    from benchmark_adaptive_draft import pre_sample_waves
+
+    data = [{"conversations": [
+        {"value": " ".join(["word"] * 10)},
+        {"value": " ".join(["word"] * 10)},
+    ]} for _ in range(100)]
+    path = tmp_path / "sg.json"
+    path.write_text(_json.dumps(data))
+
+    waves = pre_sample_waves(
+        dataset_path=str(path),
+        small_batch=4,
+        large_batch=16,
+        num_wave_pairs=3,
+        max_model_len=4096,
+        tokenizer=_MockTokenizer(),
+        seed=42,
+    )
+    assert len(waves) == 6
+    for i, wave in enumerate(waves):
+        expected_max = 4 if i % 2 == 0 else 16
+        assert len(wave) <= expected_max
+        assert len(wave) > 0

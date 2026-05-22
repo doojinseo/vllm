@@ -64,3 +64,27 @@ def load_sharegpt(
             continue
         results.append((prompt_ids, len(completion_ids)))
     return results
+
+
+def pre_sample_waves(
+    dataset_path: str,
+    small_batch: int,
+    large_batch: int,
+    num_wave_pairs: int,
+    max_model_len: int,
+    tokenizer,
+    seed: int,
+) -> list[list[tuple[list[int], int]]]:
+    """Pre-sample one prompt list per wave; all variants share these lists."""
+    waves: list[list[tuple[list[int], int]]] = []
+    for i in range(num_wave_pairs * 2):
+        batch = small_batch if i % 2 == 0 else large_batch
+        prompts = load_sharegpt(
+            dataset_path=dataset_path,
+            num_samples=batch,
+            max_model_len=max_model_len,
+            tokenizer=tokenizer,
+            seed=seed + i,
+        )
+        waves.append(prompts)
+    return waves
