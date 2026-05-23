@@ -172,7 +172,6 @@ from vllm.v1.sample.logits_processor.interface import LogitsProcessor
 from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.sample.rejection_sampler import RejectionSampler
 from vllm.v1.sample.sampler import Sampler
-from vllm.v1.spec_decode.adaptive_draft_model import AdaptiveDraftModelProposer
 from vllm.v1.spec_decode.custom_class_proposer import create_custom_proposer
 from vllm.v1.spec_decode.dflash import DFlashProposer
 from vllm.v1.spec_decode.draft_model import DraftModelProposer
@@ -558,18 +557,11 @@ class GPUModelRunner(
 
                 self.drafter = NgramProposer(self.vllm_config)
             elif self.speculative_config.uses_draft_model():
-                if self.speculative_config.alt_model is not None:
-                    self.drafter = AdaptiveDraftModelProposer(
-                        vllm_config=self.vllm_config,
-                        device=self.device,
-                        runner=self,
-                    )
-                else:
-                    self.drafter = DraftModelProposer(
-                        vllm_config=self.vllm_config,
-                        device=self.device,
-                        runner=self,
-                    )
+                self.drafter = DraftModelProposer(
+                    vllm_config=self.vllm_config,
+                    device=self.device,
+                    runner=self,
+                )
             elif self.speculative_config.use_ngram_gpu():
                 self.drafter = NgramProposerGPU(self.vllm_config, self.device, self)
                 self.num_tokens_no_spec_gpu = torch.zeros(
@@ -4973,19 +4965,6 @@ class GPUModelRunner(
                 )
             else:
                 mm_embed_inputs = None
-
-            # Feed last step's acceptance stats to the adaptive proposer so it
-            # can refine its composite switching signal before propose().
-            if (
-                isinstance(self.drafter, AdaptiveDraftModelProposer)
-                and spec_decode_metadata is not None
-            ):
-                num_reqs = common_attn_metadata.batch_size()
-                total_accepted = (
-                    int(self.num_accepted_tokens.np[:num_reqs].sum()) - num_reqs
-                )
-                total_proposed = int(sum(spec_decode_metadata.num_draft_tokens))
-                self.drafter.notify_acceptance(total_accepted, total_proposed)
 
             draft_token_ids = self.drafter.propose(
                 target_token_ids=target_token_ids,
