@@ -40,9 +40,11 @@ class AdaptiveDraftModelProposer(DraftModelProposer):
         self._high_threshold: int = spec.adaptive_threshold
         self._low_threshold: int = spec.adaptive_low_threshold
         self._alpha: float = spec.adaptive_ema_alpha
+        self._min_dwell: int = spec.adaptive_min_dwell_steps
         self._ema: float = 0.0
         self._prev_batch_size: int = 0
         self._using_primary: bool = False   # start on alt (int8) until EMA rises
+        self._steps_since_switch: int = self._min_dwell  # allow first switch immediately
         self._primary_model: nn.Module | None = None
         self._alt_model_module: nn.Module | None = None
         # Attention layer objects keyed by "draft_model.*" names, for each model.
@@ -170,10 +172,12 @@ class AdaptiveDraftModelProposer(DraftModelProposer):
         self._alt_model_module = self._load_alt_model()
         logger.info(
             "AdaptiveDraftModelProposer ready: "
-            "primary=fp8, alt=int8, high_threshold=%d, low_threshold=%d, ema_alpha=%.2f",
+            "primary=fp8, alt=int8, high_threshold=%d, low_threshold=%d, "
+            "ema_alpha=%.2f, min_dwell_steps=%d",
             self._high_threshold,
             self._low_threshold,
             self._alpha,
+            self._min_dwell,
         )
 
     def _ensure_alt_kv_cache_bound(self) -> None:
@@ -219,14 +223,21 @@ class AdaptiveDraftModelProposer(DraftModelProposer):
             self._ema = self._alpha * batch_size + (1.0 - self._alpha) * self._ema
         self._prev_batch_size = batch_size
 
+        self._steps_since_switch += 1
+
         # Hysteresis: switch TO primary (fp8) only when EMA rises above
         # high_threshold; switch BACK to alt (int8) only when EMA falls below
         # low_threshold.  The dead-band between the two thresholds prevents
         # thrashing as the batch shrinks during the tail of a large wave.
-        if not self._using_primary and self._ema > self._high_threshold:
-            self._using_primary = True
-        elif self._using_primary and self._ema < self._low_threshold:
-            self._using_primary = False
+        # Min-dwell guard prevents rapid back-and-forth switching that causes
+        # ITL tail-latency spikes when EMA hovers near a threshold boundary.
+        if self._steps_since_switch >= self._min_dwell:
+            if not self._using_primary and self._ema > self._high_threshold:
+                self._using_primary = True
+                self._steps_since_switch = 0
+            elif self._using_primary and self._ema < self._low_threshold:
+                self._using_primary = False
+                self._steps_since_switch = 0
 
         if self._using_primary:
             self.model = self._primary_model       # fp8: good for large batch

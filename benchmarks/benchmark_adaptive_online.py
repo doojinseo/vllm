@@ -102,6 +102,7 @@ def make_spec_config(
     threshold: int,
     low_threshold: int,
     ema_alpha: float,
+    min_dwell_steps: int = 30,
 ) -> dict | None:
     """Build the --speculative-config dict for a given variant, or None for base."""
     if variant == "base":
@@ -122,6 +123,7 @@ def make_spec_config(
         cfg["adaptive_threshold"] = threshold
         cfg["adaptive_low_threshold"] = low_threshold
         cfg["adaptive_ema_alpha"] = ema_alpha
+        cfg["adaptive_min_dwell_steps"] = min_dwell_steps
     return cfg
 
 
@@ -489,6 +491,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="EMA batch-size threshold for switching BACK to int8 (low threshold)",
     )
     parser.add_argument("--ema-alpha", type=float, default=0.3)
+    parser.add_argument(
+        "--min-dwell-steps", type=int, default=30,
+        help="Minimum propose() steps to stay on a model after switching",
+    )
     parser.add_argument("--max-model-len", type=int, default=4096)
     parser.add_argument(
         "--max-num-seqs", type=int, default=128,
@@ -559,6 +565,7 @@ def main() -> None:
             threshold=args.threshold,
             low_threshold=args.low_threshold,
             ema_alpha=args.ema_alpha,
+            min_dwell_steps=args.min_dwell_steps,
         )
 
         cmd = build_serve_cmd(

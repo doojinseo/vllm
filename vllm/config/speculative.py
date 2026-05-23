@@ -175,6 +175,10 @@ class SpeculativeConfig:
     """EMA decay factor for the batch-size signal used in adaptive switching.
     Smaller values give more smoothing (less thrashing); larger values react
     faster to load changes."""
+    adaptive_min_dwell_steps: int = 30
+    """Minimum number of propose() calls to stay on a model after switching.
+    Prevents rapid back-and-forth switching that causes ITL tail-latency
+    spikes when the EMA hovers near a threshold boundary."""
 
     # required configuration params passed from engine
     target_model_config: SkipValidation[ModelConfig] = None  # type: ignore
