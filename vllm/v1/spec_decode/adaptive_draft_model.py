@@ -43,7 +43,8 @@ def _profile_machete_schedules(
     """Profile Machete CUTLASS schedule strings at two batch sizes.
 
     Returns (best_small_schedule, best_large_schedule).
-    Returns (None, None) on failure or when only one schedule exists.
+    Returns (None, None) on failure or when no schedules exist.
+    Returns the same schedule twice when only one exists.
     """
     c = kernel.config
     try:
@@ -51,6 +52,7 @@ def _profile_machete_schedules(
             a_type=c.act_type,
             b_type=c.weight_type,
             group_scales_type=c.act_type,
+            group_zeros_type=c.act_type if c.zero_points else None,
         )
     except Exception as e:
         logger.warning(
@@ -123,7 +125,9 @@ def _make_adaptive_apply(
         if c.has_g_idx:
             x_2d = kernel.act_perm(x_2d)
 
-        if not c.zero_points:
+        if c.zero_points:
+            assert w_zp is not None
+        else:
             w_zp = None
 
         n_tokens = x_2d.shape[0]
@@ -155,6 +159,7 @@ def _install_adaptive_machete_schedules(
     """Monkey-patch all MacheteLinearKernel layers in model with adaptive schedule dispatch."""
     patched = 0
     skipped_same = 0
+    skipped_failed = 0
     for module in model.modules():
         qm = getattr(module, "quant_method", None)
         if qm is None:
@@ -167,6 +172,7 @@ def _install_adaptive_machete_schedules(
             module, kernel, small_bs, large_bs
         )
         if small_sched is None and large_sched is None:
+            skipped_failed += 1
             continue
         if small_sched == large_sched:
             skipped_same += 1
@@ -176,8 +182,8 @@ def _install_adaptive_machete_schedules(
         patched += 1
 
     logger.info(
-        "Adaptive Machete scheduling: patched=%d, skipped_same_schedule=%d, threshold=%d",
-        patched, skipped_same, threshold,
+        "Adaptive Machete scheduling: patched=%d, skipped_same_schedule=%d, skipped_failed=%d, threshold=%d",
+        patched, skipped_same, skipped_failed, threshold,
     )
 
 

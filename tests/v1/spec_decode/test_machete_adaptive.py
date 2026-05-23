@@ -1,9 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-import time
 from unittest.mock import MagicMock, patch
 
 import torch
-import pytest
 
 
 def _make_fake_kernel(in_f=4096, out_f=4096, group_size=128, has_g_idx=False):
@@ -27,7 +25,6 @@ def _make_fake_kernel(in_f=4096, out_f=4096, group_size=128, has_g_idx=False):
 
 def _make_fake_layer(in_f=4096):
     layer = MagicMock()
-    # parameters() is called to discover device
     layer.parameters.return_value = iter([
         torch.nn.Parameter(torch.zeros(1))
     ])
@@ -76,7 +73,6 @@ def test_profile_schedules_single_schedule_returns_same_for_both(mock_ops, mock_
 def test_install_dispatches_small_sched_below_threshold(mock_ops, mock_profile, mock_sync):
     """After install, apply_weights uses small_sched when n_tokens < threshold."""
     from vllm.v1.spec_decode.adaptive_draft_model import _install_adaptive_machete_schedules
-    from vllm.model_executor.kernels.linear.mixed_precision.machete import MacheteLinearKernel
 
     mock_profile.return_value = ("sched_small", "sched_large")
     mock_ops.machete_mm.return_value = torch.zeros(4, 4096, dtype=torch.bfloat16)
@@ -96,13 +92,13 @@ def test_install_dispatches_small_sched_below_threshold(mock_ops, mock_profile, 
 
         _install_adaptive_machete_schedules(model, threshold=8)
 
-    # Call with n_tokens=4 < 8
+    # Call with n_tokens=4 < 8; verify exactly one new machete_mm call is made.
     layer = MagicMock()
     x = torch.zeros(4, 4096, dtype=torch.bfloat16)
+    before_count = mock_ops.machete_mm.call_count
     kernel.apply_weights(layer, x)
-
-    call_kwargs = mock_ops.machete_mm.call_args.kwargs
-    assert call_kwargs["schedule"] == "sched_small"
+    assert mock_ops.machete_mm.call_count == before_count + 1
+    assert mock_ops.machete_mm.call_args.kwargs["schedule"] == "sched_small"
 
 
 @patch("torch.cuda.synchronize")
@@ -131,7 +127,38 @@ def test_install_dispatches_large_sched_at_or_above_threshold(mock_ops, mock_pro
 
     layer = MagicMock()
     x = torch.zeros(16, 4096, dtype=torch.bfloat16)
+    before_count = mock_ops.machete_mm.call_count
     kernel.apply_weights(layer, x)
+    assert mock_ops.machete_mm.call_count == before_count + 1
+    assert mock_ops.machete_mm.call_args.kwargs["schedule"] == "sched_large"
 
-    call_kwargs = mock_ops.machete_mm.call_args.kwargs
-    assert call_kwargs["schedule"] == "sched_large"
+
+@patch("torch.cuda.synchronize")
+@patch("vllm.v1.spec_decode.adaptive_draft_model._profile_machete_schedules")
+@patch("vllm.v1.spec_decode.adaptive_draft_model.ops")
+def test_install_skips_failed_profile_and_does_not_crash(mock_ops, mock_profile, mock_sync):
+    """When _profile_machete_schedules returns (None, None), install does not crash
+    and does not replace kernel.apply_weights."""
+    from vllm.v1.spec_decode.adaptive_draft_model import _install_adaptive_machete_schedules
+
+    mock_profile.return_value = (None, None)
+
+    kernel = _make_fake_kernel()
+    original_apply_weights = kernel.apply_weights
+
+    with patch(
+        "vllm.v1.spec_decode.adaptive_draft_model.MacheteLinearKernel",
+        type(kernel),
+    ):
+        module = MagicMock()
+        module.quant_method = MagicMock()
+        module.quant_method.kernel = kernel
+
+        model = MagicMock()
+        model.modules.return_value = [module]
+
+        # Must not raise.
+        _install_adaptive_machete_schedules(model, threshold=8)
+
+    # apply_weights must not have been replaced.
+    assert kernel.apply_weights is original_apply_weights
