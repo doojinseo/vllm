@@ -181,10 +181,17 @@ def _install_adaptive_machete_schedules(
         kernel.apply_weights = _make_adaptive_apply(kernel, small_sched, large_sched, threshold)
         patched += 1
 
-    logger.info(
-        "Adaptive Machete scheduling: patched=%d, skipped_same_schedule=%d, skipped_failed=%d, threshold=%d",
-        patched, skipped_same, skipped_failed, threshold,
-    )
+    if patched == 0 and skipped_same == 0 and skipped_failed == 0:
+        logger.warning(
+            "Adaptive Machete scheduling: no MacheteLinearKernel layers found in draft model "
+            "(model may be using a different kernel, e.g. MarlinLinearKernel on non-Hopper hardware). "
+            "int8_machete will run identically to int8."
+        )
+    else:
+        logger.info(
+            "Adaptive Machete scheduling: patched=%d, skipped_same_schedule=%d, skipped_failed=%d, threshold=%d",
+            patched, skipped_same, skipped_failed, threshold,
+        )
 
 
 class AdaptiveDraftModelProposer(DraftModelProposer):
