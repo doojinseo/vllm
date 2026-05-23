@@ -146,6 +146,13 @@ def build_serve_cmd(
     return cmd
 
 
+def _clear_compile_cache() -> None:
+    import shutil
+    cache_dir = Path.home() / ".cache" / "vllm" / "torch_compile_cache"
+    if cache_dir.exists():
+        shutil.rmtree(cache_dir, ignore_errors=True)
+
+
 def start_server(cmd: list[str], log_path: str) -> subprocess.Popen:
     log_file = open(log_path, "w")  # noqa: SIM115 — kept open for subprocess lifetime
     return subprocess.Popen(
@@ -540,6 +547,8 @@ def main() -> None:
         print(f"\n{'=' * 60}")
         print(f"Variant: {variant}")
         print(f"{'=' * 60}")
+
+        _clear_compile_cache()
 
         spec_config = make_spec_config(
             variant=variant,
