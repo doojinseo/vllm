@@ -13,17 +13,172 @@ can be swapped freely between calls without needing separate graph pools.
 
 from __future__ import annotations
 
+import time
+
 import torch
 import torch.nn as nn
 from typing_extensions import override
 
+from vllm import _custom_ops as ops
 from vllm.config import CUDAGraphMode, VllmConfig
 from vllm.config.utils import replace
 from vllm.logger import init_logger
+from vllm.model_executor.kernels.linear.mixed_precision.machete import (
+    MacheteLinearKernel,
+)
 from vllm.model_executor.model_loader import get_model
 from vllm.v1.spec_decode.draft_model import DraftModelProposer
 
 logger = init_logger(__name__)
+
+
+def _profile_machete_schedules(
+    layer: nn.Module,
+    kernel: MacheteLinearKernel,
+    small_bs: int,
+    large_bs: int,
+    n_warmup: int = 3,
+    n_timed: int = 10,
+) -> tuple[str | None, str | None]:
+    """Profile Machete CUTLASS schedule strings at two batch sizes.
+
+    Returns (best_small_schedule, best_large_schedule).
+    Returns (None, None) on failure or when only one schedule exists.
+    """
+    c = kernel.config
+    try:
+        schedules: list[str] = ops.machete_supported_schedules(
+            a_type=c.act_type,
+            b_type=c.weight_type,
+            group_scales_type=c.act_type,
+        )
+    except Exception as e:
+        logger.warning(
+            "machete_supported_schedules failed: %s; skipping adaptive scheduling", e
+        )
+        return None, None
+
+    if not schedules:
+        return None, None
+    if len(schedules) == 1:
+        return schedules[0], schedules[0]
+
+    w_q, w_s, w_zp, _ = kernel._get_weight_params(layer)
+    if not c.zero_points:
+        w_zp = None
+    device = w_q.device
+    in_features = c.partition_weight_shape[0]
+
+    def _time_one(bs: int, sched: str) -> float:
+        x = torch.zeros(bs, in_features, dtype=c.act_type, device=device)
+        if c.has_g_idx:
+            x = kernel.act_perm(x)
+        try:
+            for _ in range(n_warmup):
+                ops.machete_mm(
+                    a=x, b_q=w_q, b_type=c.weight_type,
+                    b_group_zeros=w_zp, b_group_scales=w_s,
+                    b_group_size=c.group_size, schedule=sched,
+                )
+            torch.cuda.synchronize()
+            t0 = time.perf_counter()
+            for _ in range(n_timed):
+                ops.machete_mm(
+                    a=x, b_q=w_q, b_type=c.weight_type,
+                    b_group_zeros=w_zp, b_group_scales=w_s,
+                    b_group_size=c.group_size, schedule=sched,
+                )
+            torch.cuda.synchronize()
+            return (time.perf_counter() - t0) / n_timed
+        except Exception:
+            return float("inf")
+
+    best_small = min(schedules, key=lambda s: _time_one(small_bs, s))
+    best_large = min(schedules, key=lambda s: _time_one(large_bs, s))
+    logger.debug(
+        "Machete schedule profiling: small_bs=%d -> %s, large_bs=%d -> %s",
+        small_bs, best_small, large_bs, best_large,
+    )
+    return best_small, best_large
+
+
+def _make_adaptive_apply(
+    kernel: MacheteLinearKernel,
+    small_sched: str | None,
+    large_sched: str | None,
+    threshold: int,
+):
+    """Return a replacement for kernel.apply_weights that dispatches by token count."""
+    c = kernel.config
+
+    def adaptive_apply(
+        layer: nn.Module,
+        x: torch.Tensor,
+        bias: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        w_q, w_s, w_zp, _ = kernel._get_weight_params(layer)
+        x_2d = x.reshape(-1, x.shape[-1])
+        out_shape = x.shape[:-1] + (c.partition_weight_shape[1],)
+
+        if c.has_g_idx:
+            x_2d = kernel.act_perm(x_2d)
+
+        if not c.zero_points:
+            w_zp = None
+
+        n_tokens = x_2d.shape[0]
+        schedule = small_sched if n_tokens < threshold else large_sched
+
+        output = ops.machete_mm(
+            a=x_2d,
+            b_q=w_q,
+            b_type=c.weight_type,
+            b_group_zeros=w_zp,
+            b_group_scales=w_s,
+            b_group_size=c.group_size,
+            schedule=schedule,
+        )
+
+        if bias is not None:
+            output.add_(bias)
+        return output.reshape(out_shape)
+
+    return adaptive_apply
+
+
+def _install_adaptive_machete_schedules(
+    model: nn.Module,
+    threshold: int,
+    small_bs: int = 1,
+    large_bs: int = 16,
+) -> None:
+    """Monkey-patch all MacheteLinearKernel layers in model with adaptive schedule dispatch."""
+    patched = 0
+    skipped_same = 0
+    for module in model.modules():
+        qm = getattr(module, "quant_method", None)
+        if qm is None:
+            continue
+        kernel = getattr(qm, "kernel", None)
+        if not isinstance(kernel, MacheteLinearKernel):
+            continue
+
+        small_sched, large_sched = _profile_machete_schedules(
+            module, kernel, small_bs, large_bs
+        )
+        if small_sched is None and large_sched is None:
+            continue
+        if small_sched == large_sched:
+            skipped_same += 1
+            continue
+
+        kernel.apply_weights = _make_adaptive_apply(kernel, small_sched, large_sched, threshold)
+        patched += 1
+
+    logger.info(
+        "Adaptive Machete scheduling: patched=%d, skipped_same_schedule=%d, threshold=%d",
+        patched, skipped_same, threshold,
+    )
 
 
 class AdaptiveDraftModelProposer(DraftModelProposer):
