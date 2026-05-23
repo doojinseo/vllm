@@ -1822,6 +1822,13 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # If set to 1, use Python spinloop extension to poll in a more efficient
     # way when using the mp backend.
     "VLLM_USE_SPINLOOP_EXT": lambda: bool(int(os.getenv("VLLM_USE_SPINLOOP_EXT", "0"))),
+    # When set to a positive integer N, installs adaptive Machete schedule
+    # dispatch on MacheteLinearKernel layers in the draft model: schedules
+    # tuned for small batch (bs=1) are used when token count < N, and
+    # schedules tuned for large batch (bs=16) otherwise.
+    "VLLM_ADAPTIVE_MACHETE_THRESHOLD": lambda: int(
+        os.environ.get("VLLM_ADAPTIVE_MACHETE_THRESHOLD", "0")
+    ),
 }
 
 

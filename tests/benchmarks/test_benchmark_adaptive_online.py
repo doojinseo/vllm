@@ -112,6 +112,20 @@ def test_make_spec_config_int8():
 
 
 @pytest.mark.benchmark
+def test_make_spec_config_int8_machete():
+    from benchmark_adaptive_online import make_spec_config
+    cfg = make_spec_config(
+        variant="int8_machete",
+        draft_model_base="M/base", draft_model_fp8="M/fp8", draft_model_int8="M/int8",
+        num_spec_tokens=5, threshold=8, low_threshold=4, ema_alpha=0.3,
+    )
+    assert cfg is not None
+    assert cfg["model"] == "M/int8"
+    assert "alt_model" not in cfg
+    assert "adaptive_threshold" not in cfg
+
+
+@pytest.mark.benchmark
 def test_make_spec_config_adaptive():
     from benchmark_adaptive_online import make_spec_config
     cfg = make_spec_config(
@@ -357,3 +371,49 @@ def test_parse_args_custom_rate(tmp_path):
     assert args.request_rate == pytest.approx(8.0)
     assert args.duration == pytest.approx(60.0)
     assert args.variants == ["fp8", "adaptive"]
+
+
+# ---------------------------------------------------------------------------
+# start_server
+# ---------------------------------------------------------------------------
+
+@pytest.mark.benchmark
+def test_start_server_passes_extra_env_to_popen(tmp_path):
+    from unittest.mock import MagicMock, patch
+    import subprocess
+    from benchmark_adaptive_online import start_server
+
+    fake_proc = MagicMock()
+    fake_proc.poll.return_value = None
+
+    with patch("subprocess.Popen", return_value=fake_proc) as mock_popen:
+        log_path = tmp_path / "server.log"
+        start_server(
+            ["vllm", "serve", "--model", "M/x"],
+            log_path=str(log_path),
+            extra_env={"VLLM_ADAPTIVE_MACHETE_THRESHOLD": "8"},
+        )
+        call_kwargs = mock_popen.call_args.kwargs
+        env_passed = call_kwargs.get("env", {})
+        assert "VLLM_ADAPTIVE_MACHETE_THRESHOLD" in env_passed
+        assert env_passed["VLLM_ADAPTIVE_MACHETE_THRESHOLD"] == "8"
+        # Verify parent env is inherited (not a bare env)
+        assert "PATH" in env_passed
+
+
+@pytest.mark.benchmark
+def test_start_server_no_extra_env_is_backward_compatible(tmp_path):
+    from unittest.mock import MagicMock, patch
+    from benchmark_adaptive_online import start_server
+
+    fake_proc = MagicMock()
+    fake_proc.poll.return_value = None
+
+    with patch("subprocess.Popen", return_value=fake_proc) as mock_popen:
+        log_path = tmp_path / "server.log"
+        # No extra_env arg — must not raise
+        start_server(
+            ["vllm", "serve", "--model", "M/x"],
+            log_path=str(log_path),
+        )
+        assert mock_popen.called

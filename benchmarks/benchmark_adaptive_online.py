@@ -515,7 +515,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--variants", nargs="+",
         default=["base", "draft_base", "int8", "fp8", "adaptive"],
-        choices=["base", "draft_base", "int8", "fp8", "adaptive"],
+        choices=["base", "draft_base", "int8", "int8_machete", "fp8", "adaptive"],
         help="Which variants to benchmark",
     )
     return parser.parse_args(argv)

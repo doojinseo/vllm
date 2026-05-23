@@ -97,7 +97,15 @@ class DraftModelProposer(SpecDecodeBaseProposer):
             from vllm.v1.spec_decode.adaptive_draft_model import (
                 _install_adaptive_machete_schedules,
             )
-            threshold = int(threshold_str)
+            try:
+                threshold = int(threshold_str)
+            except ValueError:
+                logger.warning(
+                    "VLLM_ADAPTIVE_MACHETE_THRESHOLD=%r is not a valid integer; "
+                    "skipping adaptive Machete scheduling",
+                    threshold_str,
+                )
+                return
             logger.info(
                 "VLLM_ADAPTIVE_MACHETE_THRESHOLD=%d: "
                 "installing adaptive Machete schedules on draft model",
