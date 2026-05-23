@@ -43,6 +43,12 @@ class AdaptiveDraftModelProposer(DraftModelProposer):
         self._ema: float = 0.0
         self._prev_batch_size: int = 0
         self._using_primary: bool = False   # start on alt (int8) until EMA rises
+        # Acceptance rate EMA: tracks fraction of draft tokens accepted.
+        # Starts at 1.0 (optimistic) and decays toward observed rate.
+        self._acceptance_ema: float = 1.0
+        # Burst threshold: immediate fp8 switch when batch jumps this much
+        # in a single step (proxy for a large queue draining into decode).
+        self._burst_threshold: int = max(1, self._high_threshold // 2)
         self._primary_model: nn.Module | None = None
         self._alt_model_module: nn.Module | None = None
         # Attention layer objects keyed by "draft_model.*" names, for each model.
@@ -197,6 +203,19 @@ class AdaptiveDraftModelProposer(DraftModelProposer):
         # Force eager mode so we can swap self.model freely between calls.
         self.cudagraph_dispatcher.initialize_cudagraph_keys(CUDAGraphMode.NONE)
 
+    def notify_acceptance(self, total_accepted: int, total_proposed: int) -> None:
+        """Update the rolling acceptance-rate EMA from last verification step.
+
+        Called by the model runner after each target-model verification before
+        the next propose().  total_accepted is the number of draft tokens the
+        target accepted; total_proposed is the number that were speculated.
+        """
+        if total_proposed > 0:
+            step_rate = total_accepted / total_proposed
+            self._acceptance_ema = (
+                self._alpha * step_rate + (1.0 - self._alpha) * self._acceptance_ema
+            )
+
     @override
     def propose(self, *args, **kwargs) -> torch.Tensor:
         # Locate common_attn_metadata from positional or keyword arguments.
@@ -210,22 +229,31 @@ class AdaptiveDraftModelProposer(DraftModelProposer):
             common_attn_metadata = kwargs["common_attn_metadata"]
 
         batch_size: int = common_attn_metadata.batch_size()
-        if batch_size > self._prev_batch_size:
-            # Batch grew → new large batch started.  Reset EMA so model
-            # selection reflects the current load immediately instead of
-            # lagging behind the previous wave's decaying batch size.
+        burst: int = batch_size - self._prev_batch_size
+        if burst > 0:
+            # Batch grew → reset EMA to current value so model selection
+            # reflects actual load immediately instead of lagging.
             self._ema = float(batch_size)
+            # Idea 4: large burst → queue draining into decode → switch to
+            # fp8 immediately rather than waiting for EMA to climb.
+            if burst >= self._burst_threshold and not self._using_primary:
+                self._using_primary = True
+                logger.debug("Preemptive fp8 switch on batch burst of %d", burst)
         else:
             self._ema = self._alpha * batch_size + (1.0 - self._alpha) * self._ema
         self._prev_batch_size = batch_size
 
-        # Hysteresis: switch TO primary (fp8) only when EMA rises above
-        # high_threshold; switch BACK to alt (int8) only when EMA falls below
-        # low_threshold.  The dead-band between the two thresholds prevents
-        # thrashing as the batch shrinks during the tail of a large wave.
-        if not self._using_primary and self._ema > self._high_threshold:
+        # Idea 5: composite signal — scale EMA batch size by acceptance rate.
+        # When drafts are rejected often (low acceptance), the effective
+        # throughput gain of fp8 shrinks; stay on int8 longer.
+        effective_load: float = self._ema * self._acceptance_ema
+
+        # Hysteresis: switch TO primary (fp8) only when effective load rises
+        # above high_threshold; switch BACK to alt (int8) only when it falls
+        # below low_threshold.
+        if not self._using_primary and effective_load > self._high_threshold:
             self._using_primary = True
-        elif self._using_primary and self._ema < self._low_threshold:
+        elif self._using_primary and effective_load < self._low_threshold:
             self._using_primary = False
 
         if self._using_primary:
