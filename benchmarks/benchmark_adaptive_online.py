@@ -108,9 +108,10 @@ def make_spec_config(
         return None
     draft = {
         "draft_base": draft_model_base,
-        "int8": draft_model_int8,
-        "fp8": draft_model_fp8,
-        "adaptive": draft_model_fp8,
+        "int8":       draft_model_int8,
+        "fp8":        draft_model_fp8,
+        "adaptive":   draft_model_fp8,
+        "adaptive_df": draft_model_fp8,
     }[variant]
     cfg: dict = {
         "method": "draft_model",
@@ -119,6 +120,12 @@ def make_spec_config(
     }
     if variant == "adaptive":
         cfg["alt_model"] = draft_model_int8
+        cfg["adaptive_threshold"] = threshold
+        cfg["adaptive_low_threshold"] = low_threshold
+        cfg["adaptive_ema_alpha"] = ema_alpha
+    elif variant == "adaptive_df":
+        # fp8 primary (large batch) + draft_base alt (small batch, better acceptance)
+        cfg["alt_model"] = draft_model_base
         cfg["adaptive_threshold"] = threshold
         cfg["adaptive_low_threshold"] = low_threshold
         cfg["adaptive_ema_alpha"] = ema_alpha
@@ -486,7 +493,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--low-threshold", type=int, default=8,
-        help="EMA batch-size threshold for switching BACK to int8 (low threshold)",
+        help="EMA batch-size threshold for switching BACK to alt model (low threshold)",
     )
     parser.add_argument("--ema-alpha", type=float, default=0.3)
     parser.add_argument("--max-model-len", type=int, default=4096)
@@ -502,7 +509,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--variants", nargs="+",
         default=["base", "draft_base", "int8", "fp8", "adaptive"],
-        choices=["base", "draft_base", "int8", "fp8", "adaptive"],
+        choices=["base", "draft_base", "int8", "fp8", "adaptive", "adaptive_df"],
         help="Which variants to benchmark",
     )
     return parser.parse_args(argv)
