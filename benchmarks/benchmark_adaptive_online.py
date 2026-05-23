@@ -597,7 +597,7 @@ def main() -> None:
         finally:
             print("  Shutting down server ...")
             kill_server(proc)
-            time.sleep(5)
+            time.sleep(20)
 
     if not all_metrics:
         print("No variants completed successfully.")
