@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import os
+
 import torch
 import torch.nn as nn
 from typing_extensions import override
@@ -86,3 +88,19 @@ class DraftModelProposer(SpecDecodeBaseProposer):
     def _maybe_share_lm_head(self, target_language_model: nn.Module) -> None:
         # Draft models don't share lm_head with the target model
         pass
+
+    @override
+    def load_model(self, target_model: nn.Module) -> None:
+        super().load_model(target_model)
+        threshold_str = os.environ.get("VLLM_ADAPTIVE_MACHETE_THRESHOLD")
+        if threshold_str:
+            from vllm.v1.spec_decode.adaptive_draft_model import (
+                _install_adaptive_machete_schedules,
+            )
+            threshold = int(threshold_str)
+            logger.info(
+                "VLLM_ADAPTIVE_MACHETE_THRESHOLD=%d: "
+                "installing adaptive Machete schedules on draft model",
+                threshold,
+            )
+            _install_adaptive_machete_schedules(self.model, threshold)
