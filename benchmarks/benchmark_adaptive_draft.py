@@ -243,9 +243,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--large-batch",    type=int,   default=32)
     parser.add_argument("--num-wave-pairs", type=int,   default=8)
     parser.add_argument("--num-spec-tokens",type=int,   default=5)
-    parser.add_argument("--threshold",      type=int,   default=8,
+    parser.add_argument("--threshold",      type=int,   default=16,
                         help="EMA threshold for switching TO fp8 (high threshold)")
-    parser.add_argument("--low-threshold",  type=int,   default=4,
+    parser.add_argument("--low-threshold",  type=int,   default=8,
                         help="EMA threshold for switching BACK to int8 (low threshold)")
     parser.add_argument("--ema-alpha",      type=float, default=0.3)
     parser.add_argument("--max-model-len",  type=int,   default=4096)
@@ -253,6 +253,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output", default="results/adaptive_draft_wave_results.json")
     parser.add_argument("--plot",   default=None,
                         help="Plot path (default: --output stem + .png)")
+    parser.add_argument(
+        "--variants", nargs="+",
+        default=["base", "int8", "fp8", "adaptive"],
+        choices=["base", "int8", "fp8", "adaptive"],
+        help="Which variants to benchmark (default: all four)",
+    )
     return parser.parse_args(argv)
 
 
@@ -389,7 +395,7 @@ def main() -> None:
         wtype = "small" if i % 2 == 0 else "large"
         print(f"  wave {i} ({wtype}): {len(w)} prompts")
 
-    variant_labels = ["base", "int8", "fp8", "adaptive"]
+    variant_labels = args.variants
     all_wave_results: dict[str, list[WaveResult]] = {}
     summaries: dict[str, VariantSummary] = {}
 

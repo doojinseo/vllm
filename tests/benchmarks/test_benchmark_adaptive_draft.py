@@ -242,12 +242,13 @@ def test_parse_args_defaults(tmp_path):
     assert args.large_batch == 32
     assert args.num_wave_pairs == 8
     assert args.num_spec_tokens == 5
-    assert args.threshold == 8
-    assert args.low_threshold == 4
+    assert args.threshold == 16
+    assert args.low_threshold == 8
     assert args.ema_alpha == pytest.approx(0.3)
     assert args.seed == 42
     assert args.output == "results/adaptive_draft_wave_results.json"
     assert args.plot is None
+    assert set(args.variants) == {"base", "int8", "fp8", "adaptive"}
 
 
 @pytest.mark.benchmark
