@@ -108,10 +108,11 @@ def make_spec_config(
     if variant == "base":
         return None
     draft = {
-        "draft_base": draft_model_base,
-        "int8":       draft_model_int8,
-        "fp8":        draft_model_fp8,
-        "adaptive":   draft_model_fp8,
+        "draft_base":   draft_model_base,
+        "int8":         draft_model_int8,
+        "int8_machete": draft_model_int8,
+        "fp8":          draft_model_fp8,
+        "adaptive":     draft_model_fp8,
     }[variant]
     cfg: dict = {
         "method": "draft_model",
@@ -155,13 +156,19 @@ def _clear_compile_cache() -> None:
         shutil.rmtree(cache_dir, ignore_errors=True)
 
 
-def start_server(cmd: list[str], log_path: str) -> subprocess.Popen:
+def start_server(
+    cmd: list[str],
+    log_path: str,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.Popen:
     log_file = open(log_path, "w")  # noqa: SIM115 — kept open for subprocess lifetime
+    process_env = {**os.environ, **(extra_env or {})}
     return subprocess.Popen(
         cmd,
         stdout=log_file,
         stderr=log_file,
         start_new_session=True,
+        env=process_env,
     )
 
 
@@ -577,8 +584,12 @@ def main() -> None:
         )
         print(f"  cmd: {' '.join(cmd[:5])} ...")
 
+        extra_env: dict[str, str] | None = None
+        if variant == "int8_machete":
+            extra_env = {"VLLM_ADAPTIVE_MACHETE_THRESHOLD": str(args.threshold)}
+
         log_path = f"/tmp/vllm_serve_{variant}.log"
-        proc = start_server(cmd, log_path)
+        proc = start_server(cmd, log_path, extra_env=extra_env)
         try:
             print("  Waiting for server to be ready (up to 600s) ...")
             ready = asyncio.run(wait_for_server(base_url, proc, log_path, timeout=600))
